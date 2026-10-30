@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { Store, TEMPLATES, id } from "./store.js";
 import { NATIVE_SETUP } from "./native-setup.js";
+import { registerAgents } from "./agents/index.js";
 
 export function createServer(store = new Store()) {
   const server = new McpServer({ name: "oai-b2b-mcp-server", version: "1.0.0" });
@@ -378,6 +379,8 @@ export function createServer(store = new Store()) {
     const names = new Set(map.filter(([re]) => new RegExp(re).test(n)).flatMap(([, v]) => v));
     return { need, prerequisites: NATIVE_SETUP.filter((r) => names.has(r.capability)) };
   });
+
+  registerAgents(server);
 
   return server;
 }

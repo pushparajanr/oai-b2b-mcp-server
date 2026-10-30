@@ -30,3 +30,17 @@ Claude config: `{"mcpServers":{"marops":{"command":"node","args":["/path/to/src/
 
 ## Native-console items (sheet 2)
 These can't be done in Coworker, so they're exposed as a catalog: `list_native_setup_requirements`, `check_native_prerequisites`.
+
+## Orchestrator + product sub-agents (`src/agents/`)
+Each agent owns simulated state and tools, exposed as `<agent>_<tool>`. `orchestrator_*` tools route and chain them.
+
+| Agent | Product | Tools |
+|---|---|---|
+| `aep` | Experience Platform | `create_schema`, `list_schemas`, `create_dataset`, `ingest_records`, `get_profile`, `create_segment`, `evaluate_segment`, `create_audience`, `run_query` |
+| `ajo` | Journey Optimizer | `create_custom_action`, `create_journey`, `publish_journey`, `list_journeys`, `create_campaign`, `create_offer`, `create_decision`, `decide_offer` |
+| `workfront` | Workfront | `create_project`, `create_task`, `update_task_status`, `log_issue`, `assign`, `request_approval`, `decide_approval`, `project_status` |
+| `aem_sites` | AEM Sites | `create_page`, `add_component`, `create_content_fragment`, `update_content_fragment`, `publish_page`, `unpublish_page`, `list_pages` |
+| `aem_assets` | AEM Assets | `create_folder`, `upload_asset`, `update_metadata`, `search_assets`, `list_renditions`, `move_asset`, `run_asset_workflow` |
+
+Orchestrator tools: `orchestrator_list_agents`, `orchestrator_plan` (route text → agents in dependency order: AEP → Assets → Sites → AJO → Workfront), `orchestrator_execute` (sequential steps; `"$step2.id"` references earlier results), `orchestrator_delegate`.
+These are simulations: swap each tool's `run` for real Adobe API calls to go live.
