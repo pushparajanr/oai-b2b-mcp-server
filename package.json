@@ -8,8 +8,8 @@
     "oai-b2b-mcp-server": "src/index.js"
   },
   "scripts": {
-    "start": "node src/index.js", "start:http": "node src/http.js",
-    "test": "node test/smoke.js && node test/agents.js && node test/architecture.js && node test/upstream.js"
+    "start": "node src/index.js", "start:http": "node src/http.js", "ims:check": "node scripts/ims-check.js",
+    "test": "node test/smoke.js && node test/agents.js && node test/architecture.js && node test/upstream.js && node test/ims.js"
   },
   "engines": {
     "node": ">=18"

@@ -1,15 +1,16 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { imsFetch } from "./ims.js";
 
 const textOf = (r) => r.content?.filter((c) => c.type === "text").map((c) => c.text).join("\n") ?? "";
 
 /** Thin MCP client for one remote endpoint: lazy connect, reconnect on transport failure, JSON result parsing. */
 export class UpstreamClient {
-  constructor({ key, url, headers, timeoutMs = 30_000 }) { Object.assign(this, { key, url, headers, timeoutMs }); this.client = null; }
+  constructor({ key, url, headers, ims = null, timeoutMs = 30_000 }) { Object.assign(this, { key, url, headers, ims, timeoutMs }); this.client = null; }
   async connect() {
     if (this.client) return this.client;
     const c = new Client({ name: "oai-b2b-mcp-server", version: "1.0.0" });
-    await c.connect(new StreamableHTTPClientTransport(new URL(this.url), { requestInit: { headers: this.headers } }));
+    await c.connect(new StreamableHTTPClientTransport(new URL(this.url), { requestInit: { headers: this.headers }, ...(this.ims && { fetch: imsFetch(this.ims) }) }));
     return (this.client = c);
   }
   async close() { await this.client?.close().catch(() => {}); this.client = null; }

@@ -5,14 +5,14 @@ import { UpstreamClient } from "./client.js";
 export class RemoteAgent extends Agent {
   constructor(cfg, client = new UpstreamClient(cfg)) {
     super({ key: cfg.key, name: `${cfg.label} (live)`, product: cfg.label, description: `Live MCP upstream (${cfg.note})`, keywords: cfg.keywords ?? [], tools: {} });
-    Object.assign(this, { client, live: true, readOnly: !!cfg.readOnly, url: cfg.url, status: { connected: false, tools: 0, error: null } });
+    Object.assign(this, { client, auth: cfg.ims ? cfg.ims : null, live: true, readOnly: !!cfg.readOnly, url: cfg.url, status: { connected: false, tools: 0, error: null } });
   }
   async discover() {
     try {
       const tools = await this.client.listTools();
       this.tools = Object.fromEntries(tools.map((t) => [t.name, { description: t.description ?? "", inputSchema: t.inputSchema, annotations: t.annotations ?? {}, remote: true }]));
-      this.status = { connected: true, tools: tools.length, error: null };
-    } catch (e) { this.status = { connected: false, tools: 0, error: e.message }; }
+      this.status = { connected: true, tools: tools.length, error: null, auth: this.auth?.status().method ?? "static-token" };
+    } catch (e) { this.status = { connected: false, tools: 0, error: e.message, auth: this.auth?.status().method ?? "static-token" }; }
     return this.status;
   }
   async call(tool, args = {}) {

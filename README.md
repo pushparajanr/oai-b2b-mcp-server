@@ -70,3 +70,9 @@ so RBAC, entitlement, audit, masking and usage limits apply exactly as for built
 Built-in tools (e.g. `aep_list_audiences`) keep running on the simulation unless you map them to a live tool with
 `ADOBE_TOOL_MAP=tool-map.json`: `{"aep.list_audiences": {"service": "cdp", "tool": "<name from upstream_list_tools>", "argMap": {}, "fixed": {}}}`.
 Credentials are only sent to https Adobe hosts unless `ADOBE_ALLOW_CUSTOM_HOSTS=1`.
+
+### Authenticating with Adobe IMS
+Set `ADOBE_CLIENT_ID`, `ADOBE_CLIENT_SECRET` and `ADOBE_SCOPES` (OAuth Server-to-Server credentials from the Adobe Developer Console).
+The server requests a `client_credentials` token from IMS, caches it, refreshes before expiry, shares one in-flight refresh across
+callers, and retries once after an upstream 401. `x-api-key` defaults to the client id. `npm run ims:check` performs a live token
+request and lists which MCP endpoints connect. `npm test` includes `test/ims.js`, an end-to-end run against a mock IMS + MCP.
