@@ -46,5 +46,7 @@ export const workfront = new Agent({
         return { project: p.name, tasks: tasks.length, complete: done, percent: tasks.length ? Math.round((done / tasks.length) * 100) : 0,
           openIssues: [...s.issues.values()].filter((i) => i.projectId === p.id && i.status === "open").length,
           approvals: [...s.approvals.values()].filter((x) => x.projectId === p.id).map((x) => ({ deliverable: x.deliverable, status: x.status })) }; } },
+    list_approvals: { description: "List approvals (with ids, status, decisions) for a project.", shape: 1, schema: z.object({ projectId: z.string() }),
+      run: (a, s) => (init(s), [...s.approvals.values()].filter((x) => x.projectId === a.projectId)) },
   },
 });

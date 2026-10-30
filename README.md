@@ -44,3 +44,8 @@ Each agent owns simulated state and tools, exposed as `<agent>_<tool>`. `orchest
 
 Orchestrator tools: `orchestrator_list_agents`, `orchestrator_plan` (route text → agents in dependency order: AEP → Assets → Sites → AJO → Workfront), `orchestrator_execute` (sequential steps; `"$step2.id"` references earlier results), `orchestrator_delegate`.
 These are simulations: swap each tool's `run` for real Adobe API calls to go live.
+
+## Reference architecture
+The server now implements the layered architecture (role agents, application services, MCP gateway with RBAC/audit/masking,
+nine Adobe product services, governance). See [ARCHITECTURE.md](ARCHITECTURE.md). Run remotely with `npm run start:http`
+(`POST /auth/login` then `POST /mcp` with `Authorization: Bearer <token>`); stdio uses `MCP_USER` (default `morgan.ops`).

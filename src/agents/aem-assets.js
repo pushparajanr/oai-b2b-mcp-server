@@ -39,5 +39,7 @@ export const aemAssets = new Agent({
       run(a, s) { init(s); const x = s.assets.get(a.assetId); if (!x) throw new Error(`Unknown asset '${a.assetId}'`);
         if (a.workflow === "reprocess") x.renditions = RENDITIONS[x.type]; else x.status = a.workflow === "approve" ? "approved" : "archived";
         x.workflows.push(a.workflow); return { id: x.id, status: x.status, workflows: x.workflows }; } },
+    get_asset: { description: "Get an asset by id.", shape: 1, schema: z.object({ assetId: z.string() }),
+      run(a, s) { init(s); const x = s.assets.get(a.assetId); if (!x) throw new Error(`Unknown asset '${a.assetId}'`); return x; } },
   },
 });

@@ -13,7 +13,7 @@ const call = async (name, args = {}) => {
   return { err: !!r.isError, json };
 };
 
-assert.equal((await call("orchestrator_list_agents")).json.length, 5);
+assert.equal((await call("orchestrator_list_agents")).json.length, 9);
 const plan = (await call("orchestrator_plan", { request: "Create a segment audience, publish the landing page and track the project approval" })).json;
 assert.deepEqual(plan.map((p) => p.agent), ["aep", "aem_sites", "workfront"]);
 

@@ -5,8 +5,12 @@ import { z } from "zod";
 import { Store, TEMPLATES, id } from "./store.js";
 import { NATIVE_SETUP } from "./native-setup.js";
 import { registerAgents } from "./agents/index.js";
+import { platform } from "./platform.js";
 
-export function createServer(store = new Store()) {
+const sharedStore = new Store();
+
+/** `identity` is the authenticated user for this session; stdio defaults to MCP_USER (local trust), HTTP passes the verified bearer identity. */
+export function createServer(store = sharedStore, { identity } = {}) {
   const server = new McpServer({ name: "oai-b2b-mcp-server", version: "1.0.0" });
 
   const ok = (data) => ({ content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data, null, 2) }] });
@@ -380,7 +384,8 @@ export function createServer(store = new Store()) {
     return { need, prerequisites: NATIVE_SETUP.filter((r) => names.has(r.capability)) };
   });
 
-  registerAgents(server);
+  const session = { identity: identity ?? platform.auth.identityFor(process.env.MCP_USER ?? "morgan.ops") };
+  registerAgents(server, platform, session);
 
   return server;
 }
