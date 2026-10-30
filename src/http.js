@@ -48,6 +48,7 @@ export function startHttp({ port = Number(process.env.PORT ?? 3000) } = {}) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  await platform.initUpstreams();
   const s = await startHttp();
   console.error(`MCP HTTP listening on :${s.address().port}/mcp`);
 }

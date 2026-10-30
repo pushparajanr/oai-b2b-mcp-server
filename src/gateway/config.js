@@ -1,11 +1,11 @@
 // Personas from layer 1 mapped to gateway roles. access: 'r' = read tools, 'rw' = read + write tools.
 export const ROLES = {
-  campaign_manager: { label: "Campaign Manager", pii: false, access: { aep: "rw", ajo: "rw", workfront: "rw", aem_sites: "r", aem_assets: "rw", brand_concierge: "r", fusion: "rw", marketo: "rw", cja: "r" } },
-  creative_team: { label: "Creative Team", pii: false, access: { aem_assets: "rw", aem_sites: "rw", brand_concierge: "r", workfront: "r", ajo: "r" } },
+  campaign_manager: { label: "Campaign Manager", pii: false, access: { aep: "rw", ajo: "rw", workfront: "rw", aem_sites: "r", aem_assets: "rw", brand_concierge: "r", fusion: "rw", marketo: "rw", cja: "r", coworker: "rw" } },
+  creative_team: { label: "Creative Team", pii: false, access: { aem_assets: "rw", aem_sites: "rw", brand_concierge: "r", workfront: "r", ajo: "r", coworker: "r" } },
   brand_manager: { label: "Brand Manager", pii: false, access: { brand_concierge: "rw", aem_assets: "r", aem_sites: "r", workfront: "rw" } },
   data_manager: { label: "Data / Audience Manager", pii: true, access: { aep: "rw", ajo: "r", cja: "r", marketo: "r" } },
-  marketing_ops: { label: "Marketing Operations", pii: true, access: { aep: "rw", ajo: "rw", workfront: "rw", aem_sites: "rw", aem_assets: "rw", brand_concierge: "rw", fusion: "rw", marketo: "rw", cja: "rw" } },
-  leadership: { label: "Leadership", pii: false, access: { cja: "r", workfront: "r", ajo: "r", aep: "r" } },
+  marketing_ops: { label: "Marketing Operations", pii: true, access: { aep: "rw", ajo: "rw", workfront: "rw", aem_sites: "rw", aem_assets: "rw", brand_concierge: "rw", fusion: "rw", marketo: "rw", cja: "rw", coworker: "rw", cloud_manager: "rw" } },
+  leadership: { label: "Leadership", pii: false, access: { cja: "r", workfront: "r", ajo: "r", aep: "r", coworker: "r" } },
 };
 
 // Demo directory standing in for Microsoft Entra ID groups -> roles.
@@ -19,7 +19,7 @@ export const USERS = {
   "sam.other": { name: "Sam (other org)", role: "marketing_ops", tenant: "globex" },
 };
 
-const ALL = ["aep", "ajo", "workfront", "aem_sites", "aem_assets", "brand_concierge", "fusion", "marketo", "cja"];
+const ALL = ["aep", "ajo", "workfront", "aem_sites", "aem_assets", "brand_concierge", "fusion", "marketo", "cja", "cdp", "aem", "cloud_manager", "marketo_mcp", "workfront_mcp", "marketing_agent", "brand_intelligence", "genstudio", "coworker"];
 export const TENANTS = {
   acme: { entitlements: ALL, quota: { cost: 5000 } },
   globex: { entitlements: ["workfront", "aem_assets"], quota: { cost: 100 } },

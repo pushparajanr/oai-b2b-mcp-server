@@ -22,7 +22,7 @@ export class Router {
     if (!this.buckets.has(key)) this.buckets.set(key, new Bucket(this.rate.capacity, this.rate.perSec, this.now));
     if (!this.buckets.get(key).take()) throw new GatewayError("rate_limited", `Rate limit exceeded for ${cap.service}`, { service: cap.service, retryable: true });
     const svc = this.services.get(cap.service);
-    const route = { transport: cap.transport, sandbox: identity.sandbox, tenant: identity.tenant, imsOrg: identity.imsOrg, productToken: this.auth.productToken(identity, cap.service) };
+    const route = { transport: cap.transport, sandbox: identity.sandbox, tenant: identity.tenant, imsOrg: identity.imsOrg, productToken: svc.live ? undefined : this.auth.productToken(identity, cap.service) };
     const result = await this.integration.withRetry(() => svc.call(cap.tool, args));
     const { productToken, ...safeRoute } = route; // never surface tokens to callers
     return { result, route: safeRoute };

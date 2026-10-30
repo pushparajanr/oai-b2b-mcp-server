@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/index.js", "start:http": "node src/http.js",
-    "test": "node test/smoke.js && node test/agents.js && node test/architecture.js"
+    "test": "node test/smoke.js && node test/agents.js && node test/architecture.js && node test/upstream.js"
   },
   "engines": {
     "node": ">=18"

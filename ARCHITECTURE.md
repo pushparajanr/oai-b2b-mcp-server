@@ -35,3 +35,8 @@ Each layer of the reference diagram and where it lives. Everything runs on in-me
 ## OpenAI Agents SDK
 This repo is the tool/gateway side. An Agents SDK orchestrator connects to `/mcp` (Streamable HTTP, bearer token) and sees the same
 tools; `agent_*` tools are the seven role agents. No Agents SDK runtime or LLM is included here.
+
+## Live upstreams (`src/upstream/`)
+`endpoints.js` (URLs + RBAC aliases), `config.js` (env, host allow-list), `client.js` (MCP client with reconnect), `remote-agent.js`
+(discovered tools as a gateway service). `Gateway.addService` registers them; read/write comes from MCP `readOnlyHint`
+annotations (all tools of read-only upstreams are read). `ADOBE_TOOL_MAP` re-routes built-in tool names to live tools.

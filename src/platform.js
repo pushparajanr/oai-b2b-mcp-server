@@ -15,14 +15,19 @@ import { Notifications } from "./services/notifications.js";
 import { PolicyEngine } from "./services/policy.js";
 import { OrchestrationService } from "./services/orchestration.js";
 import { FormsService } from "./services/forms.js";
+import { loadUpstreamConfig } from "./upstream/config.js";
+import { RemoteAgent } from "./upstream/remote-agent.js";
+import { readFileSync } from "node:fs";
 
 export const PRODUCT_AGENTS = [aep, ajo, workfront, aemSites, aemAssets, brandConcierge, fusion, marketo, cja];
 const DEFAULT_GUIDELINES = { tone: "friendly", bannedWords: [], requiredDisclaimer: "", maxSubjectLength: 60 };
 
 /** Wires layers 3-5 together. One shared instance per process (state lives in the product agents). */
-export function createPlatform({ now = Date.now } = {}) {
+export function createPlatform({ now = Date.now, env = process.env } = {}) {
   const integration = new Integration();
-  const gateway = new Gateway({ agents: PRODUCT_AGENTS, integration, now });
+  const routes = env.ADOBE_TOOL_MAP ? JSON.parse(readFileSync(env.ADOBE_TOOL_MAP, "utf8")) : {};
+  const gateway = new Gateway({ agents: PRODUCT_AGENTS, integration, now, routes });
+  const upstreams = new Map();
   const data = new CampaignData({ now: () => new Date(now()).toISOString() });
   const notify = new Notifications({ now });
   const internal = {
@@ -58,7 +63,19 @@ export function createPlatform({ now = Date.now } = {}) {
     return { type, profile: await ctx.call("aep", "get_profile", { identity }), consent: policy.consent.get(identity) ?? null };
   };
 
-  return { gateway, auth: gateway.auth, productAgents: PRODUCT_AGENTS, roleAgents, makeCtx, systemIdentity, privacyRequest, ...p };
+  /** Connect configured live Adobe MCP endpoints and register their discovered tools. Failures are recorded, not fatal. */
+  const initUpstreams = async () => {
+    await Promise.all(loadUpstreamConfig(env).map(async (cfg) => {
+      const agent = upstreams.get(cfg.key) ?? new RemoteAgent(cfg);
+      upstreams.set(cfg.key, agent);
+      await agent.discover();
+      if (agent.status.connected) gateway.addService(agent);
+    }));
+    return upstreamStatus();
+  };
+  const upstreamStatus = () => [...upstreams.values()].map((a) => ({ service: a.key, product: a.product, url: a.url, readOnly: a.readOnly, ...a.status }));
+
+  return { initUpstreams, upstreamStatus, upstreams, gateway, auth: gateway.auth, productAgents: PRODUCT_AGENTS, roleAgents, makeCtx, systemIdentity, privacyRequest, ...p };
 }
 
 export const platform = createPlatform();

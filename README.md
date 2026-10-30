@@ -49,3 +49,24 @@ These are simulations: swap each tool's `run` for real Adobe API calls to go liv
 The server now implements the layered architecture (role agents, application services, MCP gateway with RBAC/audit/masking,
 nine Adobe product services, governance). See [ARCHITECTURE.md](ARCHITECTURE.md). Run remotely with `npm run start:http`
 (`POST /auth/login` then `POST /mcp` with `Authorization: Bearer <token>`); stdio uses `MCP_USER` (default `morgan.ops`).
+
+## Live Adobe MCP endpoints
+The gateway can connect to the real Adobe MCP servers. Each is enabled by a bearer token (see `.env.example`) and appears as a
+gateway service; its tools are **discovered at startup** (`upstream_status`, `upstream_list_tools`) and called with `upstream_call`,
+so RBAC, entitlement, audit, masking and usage limits apply exactly as for built-in tools.
+
+| Service key | Endpoint | Governed by role access to |
+|---|---|---|
+| `cdp` (read-only) | `https://rtcdp-mcp.adobe.io/mcp` | `aep` |
+| `aem` | `https://mcp.adobeaemcloud.com/adobe/mcp/aem` | `aem_assets` or `aem_sites` |
+| `cloud_manager` | `https://mcp.adobeaemcloud.com/adobe/mcp/cloudmanager` | `cloud_manager` (marketing_ops only) |
+| `marketo_mcp` | `https://marketo-mcp.adobe.io/mcp` | `marketo` |
+| `workfront_mcp` | `https://mcp.workfront.adobe.com/mcp/v1/workfront` | `workfront` |
+| `marketing_agent` | `https://aep-ai-ama.adobe.io/mcp` | `ajo` or `aep` |
+| `brand_intelligence` | `https://abi-mcp.adobe.io/mcp` | `brand_concierge` |
+| `genstudio` | `https://genstudio-services.adobe.io/mcp` | `cja` |
+| `coworker` | `https://cx-coworker-gateway.adobe.io/mcp` | `coworker` |
+
+Built-in tools (e.g. `aep_list_audiences`) keep running on the simulation unless you map them to a live tool with
+`ADOBE_TOOL_MAP=tool-map.json`: `{"aep.list_audiences": {"service": "cdp", "tool": "<name from upstream_list_tools>", "argMap": {}, "fixed": {}}}`.
+Credentials are only sent to https Adobe hosts unless `ADOBE_ALLOW_CUSTOM_HOSTS=1`.

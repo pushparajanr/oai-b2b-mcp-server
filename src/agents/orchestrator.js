@@ -2,7 +2,7 @@ import { z } from "zod";
 import { resolveRefs } from "./role-agents.js";
 
 // Canonical order when a request spans products: data -> assets -> brand -> content -> activation -> delivery tracking.
-const ORDER = ["aep", "aem_assets", "brand_concierge", "aem_sites", "ajo", "marketo", "fusion", "workfront", "cja"];
+const ORDER = ["aep", "aem_assets", "brand_concierge", "aem_sites", "ajo", "marketo", "fusion", "workfront", "cja", "cdp", "aem", "cloud_manager", "marketo_mcp", "workfront_mcp", "marketing_agent", "brand_intelligence", "genstudio", "coworker"];
 
 /** Product-level orchestrator. All execution goes through `invoke` (the gateway, as the calling user). */
 export class Orchestrator {

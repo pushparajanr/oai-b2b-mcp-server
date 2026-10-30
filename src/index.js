@@ -10,7 +10,7 @@ import { platform } from "./platform.js";
 const sharedStore = new Store();
 
 /** `identity` is the authenticated user for this session; stdio defaults to MCP_USER (local trust), HTTP passes the verified bearer identity. */
-export function createServer(store = sharedStore, { identity } = {}) {
+export function createServer(store = sharedStore, { identity, platform: plat = platform } = {}) {
   const server = new McpServer({ name: "oai-b2b-mcp-server", version: "1.0.0" });
 
   const ok = (data) => ({ content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data, null, 2) }] });
@@ -384,12 +384,13 @@ export function createServer(store = sharedStore, { identity } = {}) {
     return { need, prerequisites: NATIVE_SETUP.filter((r) => names.has(r.capability)) };
   });
 
-  const session = { identity: identity ?? platform.auth.identityFor(process.env.MCP_USER ?? "morgan.ops") };
-  registerAgents(server, platform, session);
+  const session = { identity: identity ?? plat.auth.identityFor(process.env.MCP_USER ?? "morgan.ops") };
+  registerAgents(server, plat, session);
 
   return server;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  await platform.initUpstreams();
   await createServer().connect(new StdioServerTransport());
 }

@@ -5,8 +5,8 @@ const READ = /^(list|get|search|evaluate|run_query|project_status|decide|ask|che
 /** Capability registry: tool catalog, API/MCP mapping, entitlement checks, read/write classification. */
 export class CapabilityRegistry {
   constructor(tenants) { this.tenants = tenants; this.caps = new Map(); }
-  register(service, tool, { description, transport }) {
-    const kind = READ.test(tool) ? "read" : "write";
+  register(service, tool, { description, transport, kind: forced }) {
+    const kind = forced ?? (READ.test(tool) ? "read" : "write");
     this.caps.set(`${service}.${tool}`, { service, tool, kind, description, transport, cost: kind === "read" ? 1 : 3 });
   }
   lookup(service, tool) {

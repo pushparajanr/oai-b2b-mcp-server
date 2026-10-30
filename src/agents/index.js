@@ -39,6 +39,19 @@ export function registerAgents(server, platform, session) {
   }
   add("agents_list", "List the campaign role agents (planner, audience, creative, asset, approval, activation, insights).", {}, () => [...roleAgents.values()].map((a) => a.describe()));
 
+  // ---- Live Adobe MCP upstreams (tools are discovered at runtime, so they are called generically) ----
+  add("upstream_status", "Live Adobe MCP endpoints: configured, connected, tool counts, last error.", {}, () => platform.upstreamStatus());
+  add("upstream_list_tools", "List a live upstream's discovered tools (name, description, input schema) that this user may see.", { service: z.string() }, ({ service }) => {
+    const a = platform.upstreams.get(service); if (!a?.status.connected) throw new Error(`Service '${service}' is not connected. See upstream_status.`);
+    return Object.entries(a.tools).map(([name, d]) => ({ name, description: d.description, kind: gateway.registry.lookup(service, name).kind, inputSchema: d.inputSchema }));
+  });
+  add("upstream_call", "Call a tool on a live Adobe MCP endpoint through the gateway (RBAC, audit, masking apply).", { service: z.string(), tool: z.string(), args: z.record(z.any()).default({}) },
+    async ({ service, tool, args }) => { if (!platform.upstreams.get(service)?.status.connected) throw new Error(`Service '${service}' is not connected. See upstream_status.`); const { result, meta } = await inv(service, tool, args); return { __meta: meta, data: result }; });
+  add("upstream_refresh", "Re-discover tools for live upstreams (restricted to marketing_ops).", {}, async () => {
+    if (session.identity.role !== "marketing_ops") throw Object.assign(new Error("upstream_refresh requires marketing_ops"), { code: "forbidden" });
+    return platform.initUpstreams();
+  });
+
   // ---- Layer 4 gateway ----
   add("auth_login", "Authenticate as a user (SSO simulation). Returns a gateway token and switches this session's identity.", { userId: z.string() }, ({ userId }) => {
     const r = gateway.auth.login({ userId }); session.identity = r.identity; return r;

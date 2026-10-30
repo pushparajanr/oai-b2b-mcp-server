@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { ROLES } from "./config.js";
+import { ACCESS_ALIAS } from "../upstream/endpoints.js";
 import { GatewayError } from "./transform.js";
 
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -25,8 +26,8 @@ export class Security {
     this.entries = []; this.alerts = []; this.denials = new Map(); this.stats = new Map();
   }
   authorize(identity, cap) {
-    const access = ROLES[identity.role]?.access[cap.service] ?? "";
-    if (access && (cap.kind === "read" || access.includes("w"))) return;
+    const grants = [].concat(ACCESS_ALIAS[cap.service] ?? cap.service).map((k) => ROLES[identity.role]?.access[k] ?? "");
+    if (grants.some((g) => g && (cap.kind === "read" || g.includes("w")))) return;
     const recent = [...(this.denials.get(identity.userId) ?? []), this.now()].filter((t) => t > this.now() - this.windowMs);
     this.denials.set(identity.userId, recent);
     if (recent.length === this.denialThreshold) this.alerts.push({ type: "repeated_denials", userId: identity.userId, count: recent.length, at: new Date(this.now()).toISOString() });
