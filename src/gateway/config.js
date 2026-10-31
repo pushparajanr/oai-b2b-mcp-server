@@ -19,7 +19,7 @@ export const USERS = {
   "sam.other": { name: "Sam (other org)", role: "marketing_ops", tenant: "globex" },
 };
 
-const ALL = ["aep", "ajo", "workfront", "aem_sites", "aem_assets", "brand_concierge", "fusion", "marketo", "cja", "cdp", "aem", "cloud_manager", "marketo_mcp", "workfront_mcp", "marketing_agent", "brand_intelligence", "genstudio", "coworker"];
+const ALL = ["aep", "ajo", "workfront", "aem_sites", "aem_assets", "brand_concierge", "fusion", "marketo", "cja", "cdp", "aem", "cloud_manager", "marketo_mcp", "marketo_rest", "email_lists", "workfront_mcp", "marketing_agent", "brand_intelligence", "genstudio", "coworker"];
 export const TENANTS = {
   acme: { entitlements: ALL, quota: { cost: 5000 } },
   globex: { entitlements: ["workfront", "aem_assets"], quota: { cost: 100 } },

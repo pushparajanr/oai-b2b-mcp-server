@@ -20,6 +20,8 @@ import { RemoteAgent } from "./upstream/remote-agent.js";
 import { AuthPolicy } from "./auth/auth-policy.js";
 import { TokenBroker } from "./auth/token-broker.js";
 import { AjoRestAgent } from "./upstream/ajo-rest.js";
+import { MarketoRestAgent } from "./upstream/marketo-rest.js";
+import { EmailListAgent } from "./upstream/email-lists.js";
 import { readFileSync } from "node:fs";
 import { log } from "./log.js";
 
@@ -93,6 +95,16 @@ export function createPlatform({ now = Date.now, env = process.env } = {}) {
       log[agent.status.connected ? "info" : "warn"]("upstream.discover", { agent: agent.key, url: agent.url, connected: agent.status.connected, tools: agent.status.tools, error: agent.status.error });
       if (agent.status.connected) gateway.addService(agent);
     }));
+    // Self-authenticating local services are appended after the Adobe upstreams.
+    const el = new EmailListAgent({ file: env.EMAIL_LISTS_FILE || undefined });
+    upstreams.set(el.key, el); gateway.addService(el);
+    if (MarketoRestAgent.configured(env)) {
+      const mu = new URL(env.MARKETO_BASE_URL);
+      if (env.ADOBE_ALLOW_CUSTOM_HOSTS !== "1" && !(mu.protocol === "https:" && /(^|\.)mktorest\.com$/.test(mu.hostname))) throw new Error(`Refusing to send Marketo credentials to ${mu.origin}; expected https://<munchkin-id>.mktorest.com (set ADOBE_ALLOW_CUSTOM_HOSTS=1 to override)`);
+      const mk = new MarketoRestAgent({ env, now, emailLists: el });
+      upstreams.set(mk.key, mk); gateway.addService(mk);
+      log.info("upstream.discover", { agent: mk.key, url: mk.url, connected: true, tools: mk.status.tools, auth: "marketo-rest" });
+    }
     return upstreamStatus();
   };
   const upstreamStatus = () => [...upstreams.values()].map((a) => ({ service: a.key, product: a.product, url: a.url, readOnly: a.readOnly, ...a.status }));

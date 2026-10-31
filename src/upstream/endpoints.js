@@ -13,6 +13,6 @@ export const UPSTREAMS = {
 
 // Gateway RBAC/entitlement keys that govern each live service (a role needs access to any one of them).
 export const ACCESS_ALIAS = {
-  cdp: "aep", aem: ["aem_assets", "aem_sites"], marketo_mcp: "marketo", workfront_mcp: "workfront",
+  cdp: "aep", aem: ["aem_assets", "aem_sites"], marketo_mcp: "marketo", marketo_rest: "marketo", email_lists: "marketo", workfront_mcp: "workfront",
   marketing_agent: ["ajo", "aep"], brand_intelligence: "brand_concierge", genstudio: "cja",
 };

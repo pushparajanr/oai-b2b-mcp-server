@@ -45,7 +45,7 @@ writeFileSync(mapFile, JSON.stringify({ "aep.list_audiences": { service: "cdp", 
 const env = { USE_COWORKER_LOGIN: "0", ADOBE_ALLOW_CUSTOM_HOSTS: "1", ADOBE_UPSTREAMS: "cdp,cloud_manager,brand_intelligence", ADOBE_IMS_TOKEN: "secret-token", ADOBE_ORG_ID: "ORG@AdobeOrg", ADOBE_CDP_URL: url, ADOBE_CLOUD_MANAGER_URL: url, ADOBE_BRAND_INTELLIGENCE_URL: url, ADOBE_TOOL_MAP: mapFile };
 const p = createPlatform({ env });
 const status = await p.initUpstreams();
-assert.deepEqual(status.map((s) => [s.service, s.connected, s.tools]), [["cdp", true, 3], ["cloud_manager", true, 3], ["brand_intelligence", true, 3]]);
+assert.deepEqual(status.filter((s) => s.service !== "email_lists").map((s) => [s.service, s.connected, s.tools]), [["cdp", true, 3], ["cloud_manager", true, 3], ["brand_intelligence", true, 3]]);
 assert(seen.every((r) => r.auth === "Bearer secret-token" && r.org === "ORG@AdobeOrg"), "credentials + org header sent upstream");
 
 async function as(userId) {
@@ -57,7 +57,7 @@ async function as(userId) {
 const [ops, leader, creative, cm] = await Promise.all(["morgan.ops", "lee.leader", "riley.creative", "casey.cm"].map(as));
 
 // Discovery + calls through the gateway
-assert.equal((await ops("upstream_status")).json.length, 3);
+assert.equal((await ops("upstream_status")).json.length, 4); // 3 Adobe upstreams + local email_lists
 assert((await ops("upstream_list_tools", { service: "cdp" })).json.map((t) => t.name).includes("list_audiences"));
 let r = await leader("upstream_call", { service: "cdp", tool: "list_audiences" });
 assert(!r.err && r.json[0].id === "a1" && r.meta.transport === "mcp-remote");
@@ -87,7 +87,8 @@ assert((await ops("gateway_audit_log", { service: "cdp" })).json.entries.length 
 // Auth failure upstream is reported, not fatal
 const bad = createPlatform({ env: { ...env, ADOBE_IMS_TOKEN: "wrong", ADOBE_UPSTREAMS: "cdp" } });
 const bs = await bad.initUpstreams();
-assert.equal(bs[0].connected, false); assert(bs[0].error);
+const bad_cdp = bs.find((s) => s.service === "cdp");
+assert.equal(bad_cdp.connected, false); assert(bad_cdp.error);
 console.log("upstream OK");
 const fs = await import("node:fs"); fs.unlinkSync(mapFile);
 mock.close(); process.exit(0);

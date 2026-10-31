@@ -24,7 +24,10 @@ export class Router {
     const svc = this.services.get(cap.service);
     const route = { transport: cap.transport, sandbox: identity.sandbox, tenant: identity.tenant, imsOrg: identity.imsOrg, productToken: svc.live ? undefined : this.auth.productToken(identity, cap.service) };
     // Live services act as an Adobe principal chosen by the token broker (user token or technical account), never both.
-    const authCtx = svc.live ? await this.broker.resolve({ identity, service: cap.service, tool: cap.tool, args }) : null;
+    // Self-authenticating services (e.g. Marketo REST with its own credential) bypass the Adobe broker in every flow.
+    const authCtx = svc.live && !svc.selfAuth ? await this.broker.resolve({ identity, service: cap.service, tool: cap.tool, args }) : null;
+    // A self-authenticating service (e.g. Marketo REST) runs under its own technical credential; report it so audit still names the executing principal.
+    const selfCtx = svc.selfAuth && svc.principal ? { mode: "service", principal: svc.principal, headers: {} } : null;
     // The executing principal's IMS id is only known once the token exists, so build it after the call.
     const auditCtx = () => authCtx && {
       requestingPrincipal: identity.userId,
@@ -32,8 +35,8 @@ export class Router {
       clientId: authCtx.headers?.["x-api-key"] ?? null, orgId: authCtx.headers?.["x-gw-ims-org-id"] ?? null, sandbox: authCtx.sandbox ?? null };
     let result;
     try { result = await this.integration.withRetry(() => svc.call(cap.tool, args, identity, authCtx)); }
-    catch (e) { if (authCtx) Object.assign(e, { principal: authCtx.principal, authMode: authCtx.mode, auditCtx: auditCtx() }); throw e; }
+    catch (e) { if (selfCtx) Object.assign(e, { principal: selfCtx.principal, authMode: selfCtx.mode }); if (authCtx) Object.assign(e, { principal: authCtx.principal, authMode: authCtx.mode, auditCtx: auditCtx() }); throw e; }
     const { productToken, ...safeRoute } = route; // never surface tokens to callers
-    return { result, auditCtx: auditCtx(), route: { ...safeRoute, ...(authCtx && { auth: { mode: authCtx.mode, principal: authCtx.principal } }) } };
+    return { result, auditCtx: auditCtx(), route: { ...safeRoute, ...((authCtx ?? selfCtx) && { auth: { mode: (authCtx ?? selfCtx).mode, principal: (authCtx ?? selfCtx).principal } }) } };
   }
 }

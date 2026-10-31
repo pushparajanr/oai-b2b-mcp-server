@@ -84,7 +84,7 @@ const env = { USE_COWORKER_LOGIN: "0", ADOBE_ALLOW_CUSTOM_HOSTS: "1", ADOBE_UPST
   ADOBE_CDP_URL: mcpUrl, ADOBE_AEM_URL: mcpUrl, ADOBE_MARKETO_MCP_URL: mcpUrl, ADOBE_WORKFRONT_MCP_URL: mcpUrl, ADOBE_MARKETING_AGENT_URL: mcpUrl };
 const p = createPlatform({ env, now });
 assert.equal(p.auth.identityFor("casey.cm").imsOrg, "ORG@AdobeOrg", "configured Adobe organization is reported instead of the simulated tenant ID");
-const status = await p.initUpstreams();
+const status = (await p.initUpstreams()).filter((s) => s.service !== "email_lists");
 assert.deepEqual(status.map((s) => s.connected), [true, true, true, true, true], JSON.stringify(status));
 assert(calls.every((c) => c.kind === "s2s"), "startup discovery uses service credentials only");
 const app = await startHttp({ port: appPort, platform: p });

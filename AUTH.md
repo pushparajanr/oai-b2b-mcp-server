@@ -49,8 +49,11 @@ configured, requests that explicitly select one are rejected; set `ADOBE_SANDBOX
 verifying the sandbox exists and the Adobe principal has access.
 
 The live `aem` and `marketo_mcp` services connect to Adobe's MCP endpoints (`ADOBE_AEM_URL` and
-`ADOBE_MARKETO_MCP_URL` override those MCP URLs). `AEM_AUTHOR_URL`, `AEM_API_KEY`, and `MARKETO_*` are
-direct-product REST settings and are not consumed by these MCP integrations. Configure the Adobe S2S
+`ADOBE_MARKETO_MCP_URL` override those MCP URLs). `AEM_AUTHOR_URL` and `AEM_API_KEY` are
+direct-product REST settings and are not consumed by these MCP integrations. `MARKETO_BASE_URL`,
+`MARKETO_CLIENT_ID` and `MARKETO_CLIENT_SECRET` enable the separate `marketo_rest` service (tools
+`marketo_rest_*`), which authenticates with the Marketo credential itself in both service and coworker/delegated
+flows. Configure the Adobe S2S
 credential and product permissions instead; an upstream 401/403 indicates that Adobe rejected the
 credential or its entitlement, not that those REST variables were used.
 

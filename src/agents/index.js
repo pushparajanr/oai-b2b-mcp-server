@@ -30,9 +30,9 @@ export function registerAgents(server, platform, session) {
   }
 
   // ---- Live mode: every discovered upstream tool becomes a first-class MCP tool (simulated agents are not exposed) ----
-  if (liveOnly) {
+  {
     for (const a of platform.upstreams.values()) {
-      if (!a.status.connected) continue;
+      if (!a.status.connected || !(liveOnly || a.selfAuth)) continue;
       for (const [name, def] of Object.entries(a.tools)) {
         let shape;
         try { shape = def.inputSchema?.properties ? z.fromJSONSchema({ type: "object", ...def.inputSchema }) : z.object({}).passthrough(); }
