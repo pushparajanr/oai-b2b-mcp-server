@@ -17,6 +17,8 @@ import { OrchestrationService } from "./services/orchestration.js";
 import { FormsService } from "./services/forms.js";
 import { loadUpstreamConfig } from "./upstream/config.js";
 import { RemoteAgent } from "./upstream/remote-agent.js";
+import { UserUpstreamAuth } from "./upstream/user-auth.js";
+import { AjoRestAgent } from "./upstream/ajo-rest.js";
 import { readFileSync } from "node:fs";
 
 export const PRODUCT_AGENTS = [aep, ajo, workfront, aemSites, aemAssets, brandConcierge, fusion, marketo, cja];
@@ -63,10 +65,27 @@ export function createPlatform({ now = Date.now, env = process.env } = {}) {
     return { type, profile: await ctx.call("aep", "get_profile", { identity }), consent: policy.consent.get(identity) ?? null };
   };
 
+  const userAuthKeys = new Set((env.ADOBE_USER_TOKEN_UPSTREAMS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+  const userAuth = userAuthKeys.size && env.ADOBE_SIGNIN_CLIENT_ID && env.ADOBE_SIGNIN_CLIENT_SECRET
+    ? new UserUpstreamAuth({ tokenUrl: env.ADOBE_IMS_URL ?? "https://ims-na1.adobelogin.com/ims/token/v3", clientId: env.ADOBE_SIGNIN_CLIENT_ID, clientSecret: env.ADOBE_SIGNIN_CLIENT_SECRET, now })
+    : null;
+  /** Store a signed-in user's own Adobe tokens; user-token upstreams then call as that user. */
+  const setUserTokens = (userId, tokens) => {
+    if (!userAuth) return;
+    userAuth.set(userId, tokens);
+    for (const a of upstreams.values()) a.resetUser?.(userId);
+  };
+
   /** Connect configured live Adobe MCP endpoints and register their discovered tools. Failures are recorded, not fatal. */
   const initUpstreams = async () => {
-    await Promise.all(loadUpstreamConfig(env).map(async (cfg) => {
-      const agent = upstreams.get(cfg.key) ?? new RemoteAgent(cfg);
+    const cfgs = loadUpstreamConfig(env);
+    if (env.MCP_LIVE_ONLY === "1" && cfgs[0]?.ims) {
+      // Live mode: AJO is served by the real AJO REST API instead of the simulated agent (same role/entitlement key).
+      const ajo = new AjoRestAgent({ env, ims: cfgs[0].ims, userAuth: userAuthKeys.has("ajo") ? userAuth : null });
+      upstreams.set("ajo", ajo); gateway.addService(ajo);
+    }
+    await Promise.all(cfgs.map(async (cfg) => {
+      const agent = upstreams.get(cfg.key) ?? new RemoteAgent(cfg, undefined, userAuth && userAuthKeys.has(cfg.key) ? userAuth : null);
       upstreams.set(cfg.key, agent);
       await agent.discover();
       if (agent.status.connected) gateway.addService(agent);
@@ -75,7 +94,7 @@ export function createPlatform({ now = Date.now, env = process.env } = {}) {
   };
   const upstreamStatus = () => [...upstreams.values()].map((a) => ({ service: a.key, product: a.product, url: a.url, readOnly: a.readOnly, ...a.status }));
 
-  return { initUpstreams, upstreamStatus, upstreams, gateway, auth: gateway.auth, productAgents: PRODUCT_AGENTS, roleAgents, makeCtx, systemIdentity, privacyRequest, ...p };
+  return { initUpstreams, upstreamStatus, upstreams, setUserTokens, userAuth, gateway, auth: gateway.auth, productAgents: PRODUCT_AGENTS, roleAgents, makeCtx, systemIdentity, privacyRequest, ...p };
 }
 
 export const platform = createPlatform();

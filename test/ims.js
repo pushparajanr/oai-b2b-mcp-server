@@ -17,10 +17,11 @@ const imsSrv = http.createServer(async (req, res) => {
   const f = new URLSearchParams(b); ims.requests.push(Object.fromEntries(f));
   const fail = (code, error) => { res.writeHead(code, { "content-type": "application/json" }).end(JSON.stringify({ error })); };
   if (req.method !== "POST" || req.url !== "/ims/token/v3") return fail(404, "not_found");
-  if (f.get("grant_type") !== "client_credentials") return fail(400, "unsupported_grant_type");
+  if (!["client_credentials", "refresh_token"].includes(f.get("grant_type"))) return fail(400, "unsupported_grant_type");
   if (f.get("client_id") !== CLIENT.id || f.get("client_secret") !== CLIENT.secret) return fail(401, "invalid_client");
+  if (f.get("grant_type") === "refresh_token" && f.get("refresh_token") !== "refresh-value") return fail(401, "invalid_refresh_token");
   const token = `ims_tok_${++ims.n}`; ims.issued.add(token);
-  res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ access_token: token, token_type: "bearer", expires_in: EXPIRES_IN }));
+  res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ access_token: token, token_type: "bearer", expires_in: EXPIRES_IN, ...(f.get("grant_type") === "refresh_token" && { refresh_token: "refresh-value-next" }) }));
 });
 const up = { seen: [] };
 const mcpSrv = http.createServer(async (req, res) => {
@@ -97,6 +98,19 @@ const toks = await Promise.all(Array.from({ length: 8 }, () => sf.getToken()));
 assert.equal(new Set(toks).size, 1); assert.equal(ims.requests.length - ns, 1);
 assert.equal(sf.status().hasToken, true);
 assert(!JSON.stringify(sf.status()).includes(CLIENT.secret), "status never exposes the secret");
+
+// --- 6. OAuth Web App credentials use refresh-token grants and persist token rotation
+const rotated = [];
+const web = new ImsTokenProvider({
+  tokenUrl: imsUrl, clientId: CLIENT.id, clientSecret: CLIENT.secret,
+  refreshToken: "refresh-value", onRefreshToken: async (value) => rotated.push(value),
+});
+assert.match(await web.getToken(), /^ims_tok_/);
+assert.equal(ims.requests.at(-1).grant_type, "refresh_token");
+assert.equal(ims.requests.at(-1).refresh_token, "refresh-value");
+assert.deepEqual(rotated, ["refresh-value-next"]);
+assert.equal(web.status().method, "ims-refresh-token");
+assert(!JSON.stringify(web.status()).includes("refresh-value"), "status never exposes the refresh token");
 
 // --- 6. secret and tokens never leak via gateway outputs
 const out = JSON.stringify([r.meta, (await ops("gateway_audit_log", { limit: 500 })).json, (await ops("upstream_status")).json, (await ops("gateway_monitoring")).json]);

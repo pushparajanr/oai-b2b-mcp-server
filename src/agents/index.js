@@ -17,14 +17,35 @@ export function registerAgents(server, platform, session) {
     catch (e) { return { isError: true, content: [{ type: "text", text: e.code ? `[${e.code}] ${e.message}` : e.message }] }; }
   });
 
+  const liveOnly = session.liveOnly === true;
+
   // ---- Layer 5 product tools (via gateway) ----
-  for (const a of productAgents) for (const [name, def] of Object.entries(a.tools)) {
+  for (const a of liveOnly ? [] : productAgents) for (const [name, def] of Object.entries(a.tools)) {
     add(`${a.key}_${name}`, `[${a.product}] ${def.description}`, def.shape ? def.schema.shape : {}, async (args) => {
       const { result, meta } = await inv(a.key, name, args); return { __meta: meta, data: result };
     });
   }
 
+  // ---- Live mode: every discovered upstream tool becomes a first-class MCP tool (simulated agents are not exposed) ----
+  if (liveOnly) {
+    for (const a of platform.upstreams.values()) {
+      if (!a.status.connected) continue;
+      for (const [name, def] of Object.entries(a.tools)) {
+        let shape;
+        try { shape = def.inputSchema?.properties ? z.fromJSONSchema({ type: "object", ...def.inputSchema }) : z.object({}).passthrough(); }
+        catch { shape = z.object({}).passthrough(); }
+        const toolName = `${a.key}_${name}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+        const readOnly = a.readOnly || def.annotations?.readOnlyHint === true;
+        server.registerTool(toolName, { description: `[LIVE ${a.product}] ${def.description ?? name}`, inputSchema: shape, annotations: { readOnlyHint: readOnly } }, async (args) => {
+          try { const { result, meta } = await inv(a.key, name, args ?? {}); return { content: [text(result)], _meta: meta }; }
+          catch (e) { return { isError: true, content: [{ type: "text", text: e.code ? `[${e.code}] ${e.message}` : e.message }] }; }
+        });
+      }
+    }
+  }
+
   // ---- Product-level orchestrator ----
+  if (!liveOnly) {
   add("orchestrator_list_agents", "List product sub-agents and their tools.", {}, () => orch.list());
   add("orchestrator_plan", "Route a free-text request to the product agents that should handle it, in dependency order.", { request: z.string() },
     ({ request }) => orch.plan(request).length ? orch.plan(request) : { message: "No agent matched; use orchestrator_list_agents." });
@@ -38,6 +59,7 @@ export function registerAgents(server, platform, session) {
     add(`agent_${a.key}_${name}`, `[${a.name}] ${def.description}`, def.shape, (args) => a.call(name, args, ctx()));
   }
   add("agents_list", "List the campaign role agents (planner, audience, creative, asset, approval, activation, insights).", {}, () => [...roleAgents.values()].map((a) => a.describe()));
+  }
 
   // ---- Live Adobe MCP upstreams (tools are discovered at runtime, so they are called generically) ----
   add("upstream_status", "Live Adobe MCP endpoints: configured, connected, tool counts, last error.", {}, () => platform.upstreamStatus());
@@ -53,7 +75,7 @@ export function registerAgents(server, platform, session) {
   });
 
   // ---- Layer 4 gateway ----
-  add("auth_login", "Authenticate as a user (SSO simulation). Returns a gateway token and switches this session's identity.", { userId: z.string() }, ({ userId }) => {
+  if (!liveOnly) add("auth_login", "Authenticate as a user (SSO simulation). Returns a gateway token and switches this session's identity.", { userId: z.string() }, ({ userId }) => {
     const r = gateway.auth.login({ userId }); session.identity = r.identity; return r;
   });
   add("auth_whoami", "Show this session's identity and role.", {}, () => session.identity);

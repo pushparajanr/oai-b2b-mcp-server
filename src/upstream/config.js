@@ -1,9 +1,12 @@
+import "dotenv/config";
 import { UPSTREAMS } from "./endpoints.js";
 import { ImsTokenProvider } from "./ims.js";
+import { persistEnvValue } from "./local-env.js";
 
 const TRUSTED_HOST = /(^|\.)(adobe\.io|adobeaemcloud\.com|adobe\.com|adobelogin\.com)$/;
 const DEFAULT_IMS = "https://ims-na1.adobelogin.com/ims/token/v3";
-const checkHost = (env, url, what) => {
+export const DEFAULT_IMS_AUTHORIZE = "https://ims-na1.adobelogin.com/ims/authorize/v2";
+export const checkHost = (env, url, what) => {
   const u = new URL(url);
   if (env.ADOBE_ALLOW_CUSTOM_HOSTS !== "1" && !(u.protocol === "https:" && TRUSTED_HOST.test(u.hostname))) throw new Error(`Refusing to send credentials to ${u.origin} for '${what}'; set ADOBE_ALLOW_CUSTOM_HOSTS=1 to override`);
 };
@@ -23,9 +26,20 @@ const checkHost = (env, url, what) => {
 export function loadUpstreamConfig(env = process.env) {
   const only = env.ADOBE_UPSTREAMS?.split(",").map((s) => s.trim()).filter(Boolean);
   const out = [];
-  const ims = env.ADOBE_CLIENT_ID && env.ADOBE_CLIENT_SECRET ? (() => {
+  const authMode = env.ADOBE_AUTH_MODE ?? "client_credentials";
+  if (!["client_credentials", "authorization_code"].includes(authMode)) throw new Error(`Unsupported ADOBE_AUTH_MODE '${authMode}'`);
+  const hasRefreshCredentials = authMode !== "authorization_code" || !!env.ADOBE_REFRESH_TOKEN;
+  const ims = env.ADOBE_CLIENT_ID && env.ADOBE_CLIENT_SECRET && hasRefreshCredentials ? (() => {
     const tokenUrl = env.ADOBE_IMS_URL ?? DEFAULT_IMS; checkHost(env, tokenUrl, "ims");
-    return new ImsTokenProvider({ tokenUrl, clientId: env.ADOBE_CLIENT_ID, clientSecret: env.ADOBE_CLIENT_SECRET, scope: env.ADOBE_SCOPES, skewMs: env.ADOBE_IMS_SKEW_MS ? Number(env.ADOBE_IMS_SKEW_MS) : undefined });
+    return new ImsTokenProvider({
+      tokenUrl, clientId: env.ADOBE_CLIENT_ID, clientSecret: env.ADOBE_CLIENT_SECRET,
+      scope: env.ADOBE_SCOPES,
+      refreshToken: authMode === "authorization_code" ? env.ADOBE_REFRESH_TOKEN : undefined,
+      onRefreshToken: authMode === "authorization_code" && env === process.env
+        ? (value) => persistEnvValue(".env", "ADOBE_REFRESH_TOKEN", value)
+        : undefined,
+      skewMs: env.ADOBE_IMS_SKEW_MS ? Number(env.ADOBE_IMS_SKEW_MS) : undefined,
+    });
   })() : null;
   for (const [key, def] of Object.entries(UPSTREAMS)) {
     const K = key.toUpperCase();

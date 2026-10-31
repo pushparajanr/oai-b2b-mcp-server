@@ -4,8 +4,8 @@
  * Never logs or returns the client secret.
  */
 export class ImsTokenProvider {
-  constructor({ tokenUrl, clientId, clientSecret, scope, fetchImpl = fetch, now = Date.now, skewMs = 60_000 }) {
-    Object.assign(this, { tokenUrl, clientId, scope, fetchImpl, now, skewMs });
+  constructor({ tokenUrl, clientId, clientSecret, scope, refreshToken, onRefreshToken, fetchImpl = fetch, now = Date.now, skewMs = 60_000 }) {
+    Object.assign(this, { tokenUrl, clientId, scope, refreshToken, onRefreshToken, fetchImpl, now, skewMs });
     this.secret = clientSecret;
     this.cached = null; this.inflight = null; this.requests = 0;
   }
@@ -15,16 +15,22 @@ export class ImsTokenProvider {
     return this.inflight;
   }
   invalidate() { this.cached = null; }
-  status() { return { method: "ims-client-credentials", hasToken: !!this.cached, expiresAt: this.cached ? new Date(this.cached.expiresAt).toISOString() : null, tokenRequests: this.requests }; }
+  status() { return { method: this.refreshToken ? "ims-refresh-token" : "ims-client-credentials", hasToken: !!this.cached, expiresAt: this.cached ? new Date(this.cached.expiresAt).toISOString() : null, tokenRequests: this.requests }; }
   async #fetch() {
     this.requests++;
-    const body = new URLSearchParams({ grant_type: "client_credentials", client_id: this.clientId, client_secret: this.secret });
-    if (this.scope) body.set("scope", this.scope);
+    const body = new URLSearchParams(this.refreshToken
+      ? { grant_type: "refresh_token", client_id: this.clientId, client_secret: this.secret, refresh_token: this.refreshToken }
+      : { grant_type: "client_credentials", client_id: this.clientId, client_secret: this.secret });
+    if (!this.refreshToken && this.scope) body.set("scope", this.scope);
     let res;
     try { res = await this.fetchImpl(this.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }); }
     catch (e) { throw Object.assign(new Error(`IMS token request failed: ${e.message}`), { transient: true }); }
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.access_token) throw new Error(`IMS token request failed: ${res.status} ${data.error ?? ""} ${data.error_description ?? ""}`.trim());
+    if (data.refresh_token && data.refresh_token !== this.refreshToken) {
+      this.refreshToken = data.refresh_token;
+      await this.onRefreshToken?.(data.refresh_token);
+    }
     this.cached = { token: data.access_token, expiresAt: this.now() + Number(data.expires_in ?? 3600) * 1000 };
     return this.cached.token;
   }

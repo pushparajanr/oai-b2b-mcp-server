@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { GatewayError } from "./transform.js";
+import { ROLES } from "./config.js";
 
 /** Authentication broker: SSO login (simulated Entra ID), gateway tokens, per-product IMS token minting, role mapping. */
 export class AuthBroker {
@@ -12,6 +13,12 @@ export class AuthBroker {
     const u = this.users[userId];
     if (!u) throw new GatewayError("unauthenticated", `Unknown user '${userId}'`);
     return { userId, name: u.name, role: u.role, tenant: u.tenant, sandbox: u.sandbox ?? "prod", imsOrg: `${u.tenant}@AdobeOrg` };
+  }
+  /** Adds an externally authenticated user (e.g. Adobe IMS sign-in) with a known role. */
+  registerUser(userId, { name, role, tenant = "acme" }) {
+    if (!ROLES[role]) throw new GatewayError("invalid_request", `Unknown role '${role}'`);
+    if (!this.tenants[tenant]) throw new GatewayError("invalid_request", `Unknown tenant '${tenant}'`);
+    this.users[userId] = { name, role, tenant };
   }
   login({ userId }) {
     const identity = this.identityFor(userId);

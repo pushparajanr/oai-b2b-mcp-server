@@ -10,15 +10,18 @@ import { platform } from "./platform.js";
 const sharedStore = new Store();
 
 /** `identity` is the authenticated user for this session; stdio defaults to MCP_USER (local trust), HTTP passes the verified bearer identity. */
-export function createServer(store = sharedStore, { identity, platform: plat = platform } = {}) {
+export function createServer(store = sharedStore, { identity, platform: plat = platform, liveOnly = process.env.MCP_LIVE_ONLY === "1" } = {}) {
   const server = new McpServer({ name: "oai-b2b-mcp-server", version: "1.0.0" });
 
   const ok = (data) => ({ content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data, null, 2) }] });
   const fail = (msg) => ({ isError: true, content: [{ type: "text", text: msg }] });
-  const tool = (name, description, shape, fn) =>
+  // In live-only mode the simulated in-memory campaign tools are not exposed at all.
+  const tool = (name, description, shape, fn) => {
+    if (liveOnly) return;
     server.registerTool(name, { description, inputSchema: shape }, async (args) => {
       try { return ok(await fn(args)); } catch (e) { return fail(e.message); }
     });
+  };
   const touchpoints = (c) => c.steps.filter((s) => s.type === "touchpoint");
   const email = (c, eid) => {
     const e = c.emails.get(eid);
@@ -384,7 +387,7 @@ export function createServer(store = sharedStore, { identity, platform: plat = p
     return { need, prerequisites: NATIVE_SETUP.filter((r) => names.has(r.capability)) };
   });
 
-  const session = { identity: identity ?? plat.auth.identityFor(process.env.MCP_USER ?? "morgan.ops") };
+  const session = { identity: identity ?? plat.auth.identityFor(process.env.MCP_USER ?? "morgan.ops"), liveOnly };
   registerAgents(server, plat, session);
 
   return server;

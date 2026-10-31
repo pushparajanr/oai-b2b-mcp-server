@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 import http from "node:http";
+import { timingSafeEqual } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "./index.js";
 import { platform } from "./platform.js";
+import { createOAuth } from "./oauth.js";
 
 const json = (res, code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
 const readBody = (req) => new Promise((resolve, reject) => {
   let d = ""; req.on("data", (c) => { d += c; if (d.length > 2_000_000) reject(new Error("body too large")); });
   req.on("end", () => { try { resolve(d ? JSON.parse(d) : {}); } catch (e) { reject(e); } }); req.on("error", reject);
 });
+
+const secretMatches = (given, expected) => {
+  const a = Buffer.from(String(given ?? "")); const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+};
 
 /**
  * Remote MCP endpoint for ChatGPT custom apps, Teams, web and Adobe Experience Cloud embeds.
@@ -17,12 +25,24 @@ const readBody = (req) => new Promise((resolve, reject) => {
  */
 export function startHttp({ port = Number(process.env.PORT ?? 3000) } = {}) {
   const devLogin = process.env.NODE_ENV !== "production" || process.env.ALLOW_DEV_LOGIN === "1";
+  const apiKey = process.env.MCP_API_KEY;
+  if (apiKey && apiKey.length < 24) throw new Error("MCP_API_KEY must be at least 24 characters");
+  const apiKeyIdentity = apiKey ? platform.auth.identityFor(process.env.MCP_API_KEY_USER ?? "morgan.ops") : null;
+  const oauth = createOAuth({ auth: platform.auth, loginSecret: process.env.LOGIN_SECRET, onAdobeTokens: platform.setUserTokens });
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, "http://x");
       if (req.method === "GET" && url.pathname === "/healthz") return json(res, 200, { ok: true });
+      if (req.method === "GET" && url.pathname === "/") {
+        return json(res, 200, { name: "oai-b2b-mcp-server", mcp_endpoint: "/mcp", note: "Add <this-host>/mcp as an MCP connector; browsers cannot use /mcp directly." });
+      }
+      if (await oauth(req, res, url)) return;
       if (req.method === "POST" && url.pathname === "/auth/login") {
         if (!devLogin) return json(res, 404, { error: "not found" });
+        // Tunneled (proxied) logins must present LOGIN_SECRET; with no secret configured they are refused.
+        const proxied = !!(req.headers["x-forwarded-for"] || req.headers["ngrok-trace-id"]);
+        const secret = process.env.LOGIN_SECRET;
+        if (secret ? !secretMatches(req.headers["x-login-secret"], secret) : proxied) return json(res, 401, { error: "login secret required" });
         return json(res, 200, platform.auth.login(await readBody(req)));
       }
       if (req.method === "POST" && url.pathname.startsWith("/events/")) {
@@ -33,8 +53,14 @@ export function startHttp({ port = Number(process.env.PORT ?? 3000) } = {}) {
       if (url.pathname === "/mcp") {
         if (req.method !== "POST") return json(res, 405, { error: "method not allowed (stateless server)" });
         let identity;
-        try { identity = platform.auth.verify((req.headers.authorization ?? "").replace(/^Bearer\s+/i, "")); }
-        catch (e) { return json(res, 401, { error: e.message }); }
+        const bearer = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+        try { identity = apiKey && secretMatches(bearer, apiKey) ? apiKeyIdentity : platform.auth.verify(bearer); }
+        catch (e) {
+          const proto = req.headers["x-forwarded-proto"]?.split(",")[0] ?? "http";
+          const base = (process.env.PUBLIC_URL ?? `${proto}://${req.headers["x-forwarded-host"]?.split(",")[0] ?? req.headers.host}`).replace(/\/$/, "");
+          res.setHeader("www-authenticate", `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`);
+          return json(res, 401, { error: e.message });
+        }
         const mcp = createServer(undefined, { identity });
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         res.on("close", () => { transport.close(); mcp.close(); });
@@ -47,7 +73,7 @@ export function startHttp({ port = Number(process.env.PORT ?? 3000) } = {}) {
   return new Promise((resolve) => server.listen(port, () => resolve(server)));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   await platform.initUpstreams();
   const s = await startHttp();
   console.error(`MCP HTTP listening on :${s.address().port}/mcp`);
