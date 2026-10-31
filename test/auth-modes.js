@@ -1,6 +1,7 @@
 import http from "node:http";
 import { createHash } from "node:crypto";
 import { writeFileSync, unlinkSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -14,14 +15,19 @@ import { TokenBroker } from "../src/auth/token-broker.js";
 
 // ---------------- mock Adobe IMS ----------------
 const WEB = { id: "web-app", secret: "web-sec" };
-const S2S = { "s2s-default": "sec-default", "s2s-workfront": "sec-wf" };
+const S2S = { "s2s-default": "sec-default", "s2s-workfront": "sec-wf", "s2s-marketo": "sec-mk" };
 const ims = { tokens: new Map(), codes: new Map(), log: [], n: 0 };
 const imsSrv = http.createServer(async (req, res) => {
   let b = ""; for await (const c of req) b += c;
   const f = new URLSearchParams(b); const g = f.get("grant_type"); const client = f.get("client_id");
   ims.log.push({ grant: g, client, scope: f.get("scope") });
   const send = (code, body) => res.writeHead(code, { "content-type": "application/json" }).end(JSON.stringify(body));
-  const mint = (rec, extra = {}) => { const t = `${rec.kind}_${rec.user ?? client}_${++ims.n}`; ims.tokens.set(t, rec); return { access_token: t, token_type: "bearer", expires_in: 3600, ...extra }; };
+  const mint = (rec, extra = {}) => {
+    const n = ++ims.n;
+    const claims = Buffer.from(JSON.stringify({ user_id: `${client}@techacct.adobe.com`, client_id: client })).toString("base64url");
+    const t = rec.kind === "s2s" ? `h.${claims}.s${n}` : `${rec.kind}_${rec.user ?? client}_${n}`;
+    ims.tokens.set(t, rec); return { access_token: t, token_type: "bearer", expires_in: 3600, ...extra };
+  };
   if (g === "client_credentials") return S2S[client] && S2S[client] === f.get("client_secret") ? send(200, mint({ kind: "s2s", client })) : send(401, { error: "invalid_client" });
   if (client !== WEB.id || f.get("client_secret") !== WEB.secret) return send(401, { error: "invalid_client" });
   if (g === "authorization_code") {
@@ -62,21 +68,24 @@ const probe = http.createServer(); await new Promise((r) => probe.listen(0, r));
 const BASE = `http://127.0.0.1:${appPort}`; const imsBase = `http://127.0.0.1:${imsSrv.address().port}`; const mcpUrl = `http://127.0.0.1:${mcpSrv.address().port}/mcp`;
 
 // ---------------- configuration under test ----------------
-const policyFile = new URL("./tmp-auth-policy.json", import.meta.url).pathname;
+const policyFile = fileURLToPath(new URL("./tmp-auth-policy.json", import.meta.url));
 writeFileSync(policyFile, JSON.stringify({
-  services: { cdp: { mode: "service", sandbox: "prod", sandboxes: ["prod", "dev"] }, aem: { mode: "service" }, workfront_mcp: { mode: "service", credential: "workfront" }, marketing_agent: { mode: "delegated" } },
+  services: { cdp: { mode: "service", sandbox: "prod", sandboxes: ["prod", "dev"] }, aem: { mode: "service" }, marketo_mcp: { mode: "service", credential: "marketo" }, workfront_mcp: { mode: "service", credential: "workfront" }, marketing_agent: { mode: "delegated" } },
   operations: { "aem.whoami": { mode: "delegated" }, "cdp.http500": { allowedRoles: ["marketing_ops"] } },
 }));
 let t = Date.now(); const now = () => t;
-const env = { ADOBE_ALLOW_CUSTOM_HOSTS: "1", ADOBE_UPSTREAMS: "cdp,aem,workfront_mcp,marketing_agent", ADOBE_AUTH_POLICY: policyFile,
+const env = { USE_COWORKER_LOGIN: "0", ADOBE_ALLOW_CUSTOM_HOSTS: "1", ADOBE_UPSTREAMS: "cdp,aem,marketo_mcp,workfront_mcp,marketing_agent", ADOBE_AUTH_POLICY: policyFile,
   ADOBE_CLIENT_ID: "s2s-default", ADOBE_CLIENT_SECRET: "sec-default", ADOBE_SCOPES: "scopeB,scopeA", ADOBE_ORG_ID: "ORG@AdobeOrg", ADOBE_SANDBOX_NAME: "prod",
+  ADOBE_CRED_MARKETO_CLIENT_ID: "s2s-marketo", ADOBE_CRED_MARKETO_CLIENT_SECRET: "sec-mk", ADOBE_CRED_MARKETO_SCOPES: "marketo-scope", ADOBE_CRED_MARKETO_ORG_ID: "MKORG@AdobeOrg",
   ADOBE_CRED_WORKFRONT_CLIENT_ID: "s2s-workfront", ADOBE_CRED_WORKFRONT_CLIENT_SECRET: "sec-wf", ADOBE_CRED_WORKFRONT_SCOPES: "wfscope", ADOBE_CRED_WORKFRONT_ORG_ID: "WFORG@AdobeOrg",
   ADOBE_SIGNIN_CLIENT_ID: WEB.id, ADOBE_SIGNIN_CLIENT_SECRET: WEB.secret, ADOBE_SIGNIN_SCOPES: "openid,AdobeID",
+  ADOBE_CONNECTION_ADOBE_SCOPES: "aep_scope,ajo_scope,offline_access",
   ADOBE_IMS_URL: `${imsBase}/token`, ADOBE_IMS_AUTHORIZE_URL: `${imsBase}/authorize`, PUBLIC_URL: BASE,
-  ADOBE_CDP_URL: mcpUrl, ADOBE_AEM_URL: mcpUrl, ADOBE_WORKFRONT_MCP_URL: mcpUrl, ADOBE_MARKETING_AGENT_URL: mcpUrl };
+  ADOBE_CDP_URL: mcpUrl, ADOBE_AEM_URL: mcpUrl, ADOBE_MARKETO_MCP_URL: mcpUrl, ADOBE_WORKFRONT_MCP_URL: mcpUrl, ADOBE_MARKETING_AGENT_URL: mcpUrl };
 const p = createPlatform({ env, now });
+assert.equal(p.auth.identityFor("casey.cm").imsOrg, "ORG@AdobeOrg", "configured Adobe organization is reported instead of the simulated tenant ID");
 const status = await p.initUpstreams();
-assert.deepEqual(status.map((s) => s.connected), [true, true, true, true], JSON.stringify(status));
+assert.deepEqual(status.map((s) => s.connected), [true, true, true, true, true], JSON.stringify(status));
 assert(calls.every((c) => c.kind === "s2s"), "startup discovery uses service credentials only");
 const app = await startHttp({ port: appPort, platform: p });
 
@@ -91,16 +100,22 @@ assert.deepEqual([c.kind, c.client, c.apiKey, c.org, c.sandbox], ["s2s", "s2s-de
 assert.deepEqual(r.meta.auth, { mode: "service", principal: { type: "technical_account", id: "s2s-default", credential: "default", orgId: "ORG@AdobeOrg" } });
 let a = p.gateway.security.query({ user: "casey.cm", service: "cdp" }).at(-1);
 assert.deepEqual([a.outcome, a.authMode, a.principal, a.user], ["ok", "service", "s2s-default", "casey.cm"], "audit records requesting user AND executing principal");
+assert.deepEqual([a.requestingPrincipal, a.executingPrincipal, a.clientId, a.orgId, a.sandbox],
+  ["casey.cm", "s2s-default@techacct.adobe.com", "s2s-default", "ORG@AdobeOrg", "prod"], "audit separates requesting user, executing technical account, client id, org and sandbox");
 
 // ---- 2. separate credentials per service; service tokens cached by client + org + scope set
 await inv("casey.cm", "workfront_mcp", "read_items");
 c = toolCalls("read_items").at(-1);
 assert.deepEqual([c.client, c.apiKey, c.org], ["s2s-workfront", "s2s-workfront", "WFORG@AdobeOrg"]);
+await inv("morgan.ops", "marketo_mcp", "read_items");
+c = toolCalls("read_items").at(-1);
+assert.deepEqual([c.client, c.apiKey, c.org], ["s2s-marketo", "s2s-marketo", "MKORG@AdobeOrg"]);
 await inv("morgan.ops", "aem", "read_items"); await inv("casey.cm", "cdp", "read_items");
 const grants = (client) => ims.log.filter((x) => x.grant === "client_credentials" && x.client === client);
 assert.equal(grants("s2s-default").length, 1, "one token shared by cdp+aem calls (same credential, org, scopes)");
 assert.equal(grants("s2s-default")[0].scope, "scopeB,scopeA");
 assert.equal(grants("s2s-workfront").length, 1);
+assert.equal(grants("s2s-marketo").length, 1);
 const mk = (extra) => new TokenBroker({ env: { ...env, ...extra }, policy: AuthPolicy.load(env) });
 const b1 = mk({}), b2 = mk({ ADOBE_CRED_OTHER_CLIENT_ID: "s2s-default", ADOBE_CRED_OTHER_CLIENT_SECRET: "sec-default", ADOBE_CRED_OTHER_SCOPES: "scopeA,scopeB" }), b3 = mk({ ADOBE_CRED_OTHER_CLIENT_ID: "s2s-default", ADOBE_CRED_OTHER_CLIENT_SECRET: "sec-default", ADOBE_CRED_OTHER_SCOPES: "scopeC", ADOBE_CRED_OTHER_ORG_ID: "X@AdobeOrg" });
 assert.equal(b2.serviceProvider("other"), b2.serviceProvider("default"), "same client+org+scope set (any order) -> shared cache entry");
@@ -122,7 +137,7 @@ let start = await startConnect(e.details.connectUrl);
 assert.equal(start.status, 302);
 const loc = new URL(start.headers.get("location"));
 assert.deepEqual([loc.origin, loc.pathname, loc.searchParams.get("client_id"), loc.searchParams.get("response_type"), loc.searchParams.get("code_challenge_method"), loc.searchParams.get("redirect_uri"), loc.searchParams.get("scope")],
-  [imsBase, "/authorize", WEB.id, "code", "S256", `${BASE}/connect/callback`, "openid,AdobeID"]);
+  [imsBase, "/authorize", WEB.id, "code", "S256", `${BASE}/connect/callback`, "aep_scope,ajo_scope,offline_access"]);
 const state = loc.searchParams.get("state"); const cookie = start.headers.get("set-cookie").split(";")[0];
 assert.match(start.headers.get("set-cookie"), /HttpOnly/);
 const grantCode = (user) => { const code = `code_${++ims.n}`; ims.codes.set(code, { challenge: loc.searchParams.get("code_challenge"), user, redirectUri: `${BASE}/connect/callback` }); return code; };
@@ -195,16 +210,26 @@ x = await tool("upstream_call", { service: "marketing_agent", tool: "read_items"
 assert(x.err && /connection_required/.test(x.text) && /connectUrl/.test(x.text));
 x = await tool("auth_connect", { connection: "adobe" }); assert.match(x.text, /\/connect\//);
 x = await tool("auth_connections", {}); assert.match(x.text, /"connections": \[\]/);
+const [liveCt, liveSt] = InMemoryTransport.createLinkedPair();
+await createServer(undefined, { identity: p.auth.identityFor("morgan.ops"), platform: p, liveOnly: true }).connect(liveSt);
+const liveMcp = new Client({ name: "live-only", version: "1" }); await liveMcp.connect(liveCt);
+const liveCaps = JSON.parse((await liveMcp.callTool({ name: "gateway_capabilities", arguments: {} })).content[0].text);
+assert(liveCaps.some((cap) => cap.service === "cdp"), "live catalog includes connected Adobe upstreams");
+assert(!liveCaps.some((cap) => cap.service === "aep"), "live catalog excludes simulated services that are not exposed");
 
 // ---- 11. no secret or token appears in audit, metadata, status or errors
 const dump = JSON.stringify([p.gateway.security.entries, p.upstreamStatus(), p.broker.connectionsFor("casey.cm"), r.meta]);
 for (const s of ["sec-default", "sec-wf", "web-sec", "refresh_casey", "s2s_s2s", "user_casey"]) assert(!dump.includes(s), `leaked ${s}`);
 assert(p.gateway.security.verifyChain(), "audit chain intact");
+await liveMcp.close();
 
 // ---- 12. policy loading and validation
 assert.throws(() => new AuthPolicy({ services: { x: { mode: "both" } } }), /unknown mode/);
+assert.throws(() => AuthPolicy.load({}).check({ role: "marketing_ops" }, "cdp", "read_items", { sandboxName: "prod" }), /set ADOBE_SANDBOX_NAME or an explicit sandbox policy/);
 assert.equal(AuthPolicy.load({ ADOBE_USER_TOKEN_UPSTREAMS: "cdp" }).rule("cdp").mode, "delegated", "legacy env list maps to delegated");
 assert.equal(AuthPolicy.load({ ADOBE_AUTH_MODE_AEM: "delegated" }).rule("aem", "x").mode, "delegated");
+const noScopes = new TokenBroker({ env: { ...env, ADOBE_CONNECTION_ADOBE_SCOPES: undefined }, policy: AuthPolicy.load(env), now });
+assert.throws(() => noScopes.startConnect(noScopes.connectUrl("casey.cm", "adobe").split("/").at(-1)), { code: "connection_scopes_missing" });
 assert.equal(AuthPolicy.load({}).rule("workfront_mcp", "x").mode, "service", "default is service");
 
 console.log(`auth modes e2e OK (IMS grants: ${ims.log.length}, Adobe calls: ${calls.length})`);

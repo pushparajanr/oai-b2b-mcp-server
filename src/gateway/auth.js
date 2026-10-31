@@ -4,15 +4,15 @@ import { ROLES } from "./config.js";
 
 /** Authentication broker: SSO login (simulated Entra ID), gateway tokens, per-product IMS token minting, role mapping. */
 export class AuthBroker {
-  constructor({ users, tenants, now = Date.now, ttlMs = 3_600_000, productTtlMs = 900_000 }) {
-    Object.assign(this, { users, tenants, now, ttlMs, productTtlMs });
+  constructor({ users, tenants, orgId, now = Date.now, ttlMs = 3_600_000, productTtlMs = 900_000 }) {
+    Object.assign(this, { users, tenants, orgId, now, ttlMs, productTtlMs });
     this.tokens = new Map();
     this.productTokens = new Map();
   }
   identityFor(userId) {
     const u = this.users[userId];
     if (!u) throw new GatewayError("unauthenticated", `Unknown user '${userId}'`);
-    return { userId, name: u.name, role: u.role, tenant: u.tenant, sandbox: u.sandbox ?? "prod", imsOrg: `${u.tenant}@AdobeOrg` };
+    return { userId, name: u.name, role: u.role, tenant: u.tenant, sandbox: u.sandbox ?? "prod", imsOrg: u.imsOrg ?? this.orgId ?? `${u.tenant}@AdobeOrg` };
   }
   /** Adds an externally authenticated user (e.g. Adobe IMS sign-in) with a known role. */
   registerUser(userId, { name, role, tenant = "acme" }) {

@@ -1,13 +1,16 @@
 import { z } from "zod";
 import { ref } from "../services/policy.js";
+import { traced } from "../log.js";
 
 export class RoleAgent {
   constructor({ key, name, instructions, tools }) { Object.assign(this, { key, name, instructions, tools }); }
   describe() { return { key: this.key, name: this.name, instructions: this.instructions, tools: Object.entries(this.tools).map(([n, t]) => ({ name: n, description: t.description })) }; }
   async call(tool, args, ctx) {
-    const def = this.tools[tool];
-    if (!def) throw new Error(`Agent '${this.key}' has no tool '${tool}'. Available: ${Object.keys(this.tools).join(", ")}`);
-    return def.run(z.object(def.shape).parse(args ?? {}), ctx);
+    return traced("role_agent.call", { agent: this.key, tool, user: ctx?.identity?.userId, args }, async () => {
+      const def = this.tools[tool];
+      if (!def) throw new Error(`Agent '${this.key}' has no tool '${tool}'. Available: ${Object.keys(this.tools).join(", ")}`);
+      return def.run(z.object(def.shape).parse(args ?? {}), ctx);
+    });
   }
 }
 const t = (description, shape, run) => ({ description, shape, run });

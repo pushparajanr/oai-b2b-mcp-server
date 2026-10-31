@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { imsFetch } from "./ims.js";
+import { loggedFetch } from "../log.js";
 import { UpstreamError, capture, observingFetch } from "./errors.js";
 
 const textOf = (r) => r.content?.filter((c) => c.type === "text").map((c) => c.text).join("\n") ?? "";
@@ -11,7 +12,7 @@ export class UpstreamClient {
   async connect() {
     if (this.client) return this.client;
     const c = new Client({ name: "oai-b2b-mcp-server", version: "1.0.0" });
-    await c.connect(new StreamableHTTPClientTransport(new URL(this.url), { requestInit: { headers: this.headers }, fetch: this.ims ? imsFetch(this.ims, observingFetch()) : observingFetch() }));
+    await c.connect(new StreamableHTTPClientTransport(new URL(this.url), { requestInit: { headers: this.headers }, fetch: this.ims ? imsFetch(this.ims, observingFetch(loggedFetch(fetch, this.key ?? "upstream"))) : observingFetch(loggedFetch(fetch, this.key ?? "upstream")) }));
     return (this.client = c);
   }
   async close() { await this.client?.close().catch(() => {}); this.client = null; }

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { GatewayError } from "../gateway/transform.js";
+import { useCoworkerLogin, coworkerServices, COWORKER_CONNECTION } from "./coworker.js";
 
 const MODES = new Set(["delegated", "service"]);
 
@@ -26,6 +27,8 @@ export class AuthPolicy {
   /** Policy from defaults, ADOBE_AUTH_POLICY (JSON file), ADOBE_AUTH_MODE_<SERVICE>, and legacy ADOBE_USER_TOKEN_UPSTREAMS. */
   static load(env = process.env) {
     const p = structuredClone(DEFAULT_POLICY);
+    // Coworker login path (default): coworker calls act as the signed-in user. A policy file / ADOBE_AUTH_MODE_* below can still override it.
+    if (useCoworkerLogin(env)) for (const s of coworkerServices(env)) p.services[s] = { mode: "delegated", connection: COWORKER_CONNECTION };
     if (env.ADOBE_AUTH_POLICY) {
       const f = JSON.parse(readFileSync(env.ADOBE_AUTH_POLICY, "utf8"));
       Object.assign(p.default, f.default); Object.assign(p.services, f.services); Object.assign(p.operations, f.operations);
@@ -49,7 +52,10 @@ export class AuthPolicy {
     const asked = args.sandboxName ?? args.sandbox;
     if (asked !== undefined) {
       const allowed = r.sandboxes ?? [r.sandbox ?? this.defaultSandbox].filter(Boolean);
-      if (!allowed.includes(asked)) throw new GatewayError("sandbox_not_allowed", `Sandbox '${asked}' is not allowed for ${service}.${tool}${allowed.length ? ` (allowed: ${allowed.join(", ")})` : ""}`, { service });
+      if (!allowed.includes(asked)) {
+        const hint = allowed.length ? ` (allowed: ${allowed.join(", ")})` : " No trusted sandbox is configured; set ADOBE_SANDBOX_NAME or an explicit sandbox policy.";
+        throw new GatewayError("sandbox_not_allowed", `Sandbox '${asked}' is not allowed for ${service}.${tool}${hint}`, { service });
+      }
     }
   }
 }

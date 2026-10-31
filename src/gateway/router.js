@@ -25,10 +25,15 @@ export class Router {
     const route = { transport: cap.transport, sandbox: identity.sandbox, tenant: identity.tenant, imsOrg: identity.imsOrg, productToken: svc.live ? undefined : this.auth.productToken(identity, cap.service) };
     // Live services act as an Adobe principal chosen by the token broker (user token or technical account), never both.
     const authCtx = svc.live ? await this.broker.resolve({ identity, service: cap.service, tool: cap.tool, args }) : null;
+    // The executing principal's IMS id is only known once the token exists, so build it after the call.
+    const auditCtx = () => authCtx && {
+      requestingPrincipal: identity.userId,
+      executingPrincipal: authCtx.mode === "delegated" ? identity.userId : authCtx.provider?.subject ?? null,
+      clientId: authCtx.headers?.["x-api-key"] ?? null, orgId: authCtx.headers?.["x-gw-ims-org-id"] ?? null, sandbox: authCtx.sandbox ?? null };
     let result;
     try { result = await this.integration.withRetry(() => svc.call(cap.tool, args, identity, authCtx)); }
-    catch (e) { if (authCtx) Object.assign(e, { principal: authCtx.principal, authMode: authCtx.mode }); throw e; }
+    catch (e) { if (authCtx) Object.assign(e, { principal: authCtx.principal, authMode: authCtx.mode, auditCtx: auditCtx() }); throw e; }
     const { productToken, ...safeRoute } = route; // never surface tokens to callers
-    return { result, route: { ...safeRoute, ...(authCtx && { auth: { mode: authCtx.mode, principal: authCtx.principal } }) } };
+    return { result, auditCtx: auditCtx(), route: { ...safeRoute, ...(authCtx && { auth: { mode: authCtx.mode, principal: authCtx.principal } }) } };
   }
 }

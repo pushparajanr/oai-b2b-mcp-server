@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Agent } from "../agents/base.js";
 import { fromResponse } from "./errors.js";
+import { traced, loggedFetch } from "../log.js";
 
 const AJO_TEMPLATES_URL = "https://platform.adobe.io/ajo/content/templates";
 
@@ -9,7 +10,7 @@ const AJO_TEMPLATES_URL = "https://platform.adobe.io/ajo/content/templates";
  * service calls the API directly. The acting principal (user or technical account) is chosen by the token broker per auth policy.
  */
 export class AjoRestAgent extends Agent {
-  constructor({ fetchImpl = fetch } = {}) {
+  constructor({ fetchImpl = loggedFetch(fetch, "ajo") } = {}) {
     super({ key: "ajo", name: "Adobe Journey Optimizer (live REST)", product: "Adobe Journey Optimizer", description: "Live AJO content templates via the AJO REST API", keywords: ["ajo", "journey", "email template"], tools: {
       list_email_templates: {
         description: "List the email templates that exist in Adobe Journey Optimizer (id, name, description, labels, created/modified). Read-only.",
@@ -25,7 +26,10 @@ export class AjoRestAgent extends Agent {
     Object.assign(this, { fetchImpl, live: true, readOnly: true, url: AJO_TEMPLATES_URL, status: { connected: true, tools: 1, error: null, auth: "ajo-rest" } });
     this.schema = z.object({ sandboxName: z.string().optional(), limit: z.number().int().min(1).max(100).optional(), start: z.number().int().min(0).optional(), name: z.string().optional() });
   }
-  async call(tool, args = {}, identity, authCtx) {
+  call(tool, args = {}, identity, authCtx) {
+    return traced("upstream.call", { agent: this.key, tool, api: "ajo-rest", authMode: authCtx?.mode, sandbox: authCtx?.sandbox, args }, () => this.#call(tool, args, authCtx));
+  }
+  async #call(tool, args, authCtx) {
     if (tool !== "list_email_templates") throw new Error(`Live service 'ajo' has no tool '${tool}'.`);
     if (!authCtx?.provider) throw new Error("AJO needs an auth context from the token broker.");
     const a = this.schema.parse(args);

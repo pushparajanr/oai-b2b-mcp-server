@@ -1,5 +1,6 @@
 import { Agent } from "../agents/base.js";
 import { UpstreamClient } from "./client.js";
+import { traced } from "../log.js";
 
 /** A live Adobe MCP endpoint presented as a gateway service. Tool catalog is discovered, never hard-coded. */
 export class RemoteAgent extends Agent {
@@ -26,9 +27,11 @@ export class RemoteAgent extends Agent {
     return this.status;
   }
   async call(tool, args = {}, identity, authCtx) {
-    if (!this.tools[tool]) throw new Error(`Live service '${this.key}' has no tool '${tool}'. Use upstream_list_tools.`);
-    const result = await this.#clientFor(authCtx).callTool(tool, args);
-    this.log.push({ tool, at: new Date().toISOString() });
-    return result;
+    return traced("upstream.call", { agent: this.key, tool, url: this.url, authMode: authCtx?.mode, sandbox: authCtx?.sandbox, args }, async () => {
+      if (!this.tools[tool]) throw new Error(`Live service '${this.key}' has no tool '${tool}'. Use upstream_list_tools.`);
+      const result = await this.#clientFor(authCtx).callTool(tool, args);
+      this.log.push({ tool, at: new Date().toISOString() });
+      return result;
+    });
   }
 }

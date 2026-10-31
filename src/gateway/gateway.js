@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { log, enabled, withContext } from "../log.js";
 import { AuthBroker } from "./auth.js";
 import { CapabilityRegistry } from "./registry.js";
 import { Security } from "./security.js";
@@ -8,10 +9,10 @@ import { ROLES, SERVICE_ROUTES, TENANTS, USERS } from "./config.js";
 
 /** Adobe Marketing MCP Gateway: every product call (human or agent) goes through invoke(). */
 export class Gateway {
-  constructor({ agents, integration, now = Date.now, users = USERS, tenants = TENANTS, rate, routes = {}, broker = null, policy = null }) {
+  constructor({ agents, integration, now = Date.now, users = USERS, tenants = TENANTS, orgId, rate, routes = {}, broker = null, policy = null }) {
     this.services = new Map(agents.map((a) => [a.key, a]));
     this.now = now;
-    this.auth = new AuthBroker({ users, tenants, now });
+    this.auth = new AuthBroker({ users, tenants, orgId, now });
     this.registry = new CapabilityRegistry(tenants);
     this.security = new Security({ now });
     this.router = new Router({ services: this.services, auth: this.auth, broker, integration, now, rate });
@@ -32,16 +33,24 @@ export class Gateway {
   }
   usageFor(tenant) { return { ...(this.usage.get(tenant) ?? { calls: 0, cost: 0 }), quota: this.tenants[tenant]?.quota.cost }; }
 
-  async invoke({ token, identity, service, tool, args = {} }) {
+  /** Every product call (human, role agent or orchestrator step) enters here; nested logs carry the same requestId and user. */
+  invoke(opts) {
     const requestId = `req_${randomUUID().slice(0, 8)}`;
+    return withContext({ requestId, user: opts.identity?.userId }, () => this.#invoke(requestId, opts));
+  }
+
+  async #invoke(requestId, { token, identity, service, tool, args = {} }) {
+    const t0 = performance.now();
     // Optional re-route of a built-in tool to a live upstream tool (see ADOBE_TOOL_MAP).
     const route = this.routes.get(`${service}.${tool}`);
     if (route && this.services.has(route.service)) {
+      log.info("gateway.reroute", { from: `${service}.${tool}`, to: `${route.service}.${route.tool}` });
       args = Object.fromEntries(Object.entries(args).map(([k, v]) => [route.argMap?.[k] ?? k, v]));
       Object.assign(args, route.fixed);
       ({ service, tool } = route);
     }
     const base = { requestId, service, tool };
+    log.debug("gateway.start", { service, tool, role: identity?.role, args });
     try {
       identity ??= this.auth.verify(token);
       const cap = this.registry.lookup(service, tool);
@@ -50,10 +59,11 @@ export class Gateway {
       this.policy?.check(identity, service, tool, args); // user x resource (allowed roles, sandbox)
       const u = this.usage.get(identity.tenant) ?? { calls: 0, cost: 0 };
       if (u.cost + cap.cost > this.tenants[identity.tenant].quota.cost) throw new GatewayError("quota_exceeded", `Usage quota exceeded for tenant '${identity.tenant}'`, { service });
-      const { result, route } = await this.router.dispatch({ identity, cap, args: transformRequest(service, tool, args) });
+      const { result, route, auditCtx } = await this.router.dispatch({ identity, cap, args: transformRequest(service, tool, args) });
       this.usage.set(identity.tenant, { calls: u.calls + 1, cost: u.cost + cap.cost });
-      this.security.audit({ ...base, user: identity.userId, role: identity.role, kind: cap.kind, outcome: "ok", args, authMode: route.auth?.mode, principal: route.auth?.principal?.id });
+      this.security.audit({ ...base, user: identity.userId, role: identity.role, kind: cap.kind, outcome: "ok", args, authMode: route.auth?.mode, principal: route.auth?.principal?.id, ...auditCtx });
       this.security.record(service, true);
+      log.info("gateway.end", { service, tool, role: identity.role, kind: cap.kind, outcome: "ok", ms: Math.round(performance.now() - t0), transport: cap.transport, authMode: route.auth?.mode, principal: route.auth?.principal?.id, ...auditCtx, args, ...(enabled("debug") && { result: this.security.mask(identity, result) }) });
       return { result: this.security.mask(identity, result), meta: { requestId, service, tool, kind: cap.kind, ...route } };
     } catch (e) {
       const err = normalizeError(e, service);
@@ -61,8 +71,10 @@ export class Gateway {
         err.details = { ...err.details, principal: e.principal, mode: e.authMode };
         if (["upstream_unauthorized", "upstream_forbidden"].includes(err.code)) err.details.hint = `Adobe rejected the ${e.authMode} credential acting as ${e.principal.id}. Check that principal's product profile, role and sandbox access in the product. The server does not retry with a different credential.`;
       }
-      this.security.audit({ ...base, user: identity?.userId ?? "anonymous", role: identity?.role, outcome: err.code, args, authMode: e.authMode, principal: e.principal?.id, upstreamStatus: err.details?.upstream?.status, upstreamRequestId: err.details?.upstream?.requestId });
+      this.security.audit({ ...base, user: identity?.userId ?? "anonymous", role: identity?.role, outcome: err.code, args, authMode: e.authMode, principal: e.principal?.id, ...e.auditCtx, upstreamStatus: err.details?.upstream?.status, upstreamRequestId: err.details?.upstream?.requestId });
       if (!["forbidden", "unauthenticated", "not_found", "invalid_request", "not_entitled", "connection_required", "sandbox_not_allowed"].includes(err.code)) this.security.record(service, false);
+      log[["upstream_error", "internal_error"].includes(err.code) ? "error" : "warn"]("gateway.error", { service, tool, role: identity?.role, outcome: err.code, ms: Math.round(performance.now() - t0),
+        message: err.message, authMode: e.authMode, principal: e.principal?.id, ...e.auditCtx, upstreamStatus: err.details?.upstream?.status, upstreamRequestId: err.details?.upstream?.requestId, args });
       throw err;
     }
   }

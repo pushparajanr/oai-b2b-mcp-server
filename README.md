@@ -70,6 +70,8 @@ so RBAC, entitlement, audit, masking and usage limits apply exactly as for built
 Built-in tools (e.g. `aep_list_audiences`) keep running on the simulation unless you map them to a live tool with
 `ADOBE_TOOL_MAP=tool-map.json`: `{"aep.list_audiences": {"service": "cdp", "tool": "<name from upstream_list_tools>", "argMap": {}, "fixed": {}}}`.
 Credentials are only sent to https Adobe hosts unless `ADOBE_ALLOW_CUSTOM_HOSTS=1`.
+In live-only mode, use the exact service keys and tool names reported by `upstream_status` / `upstream_list_tools` (for example
+`cdp`, not the simulated `aep` service); `gateway_capabilities` lists only connected live services.
 
 ## Exposing the server with ngrok
 `npm run start:tunnel` starts `src/http.js` and `ngrok http $PORT` (set `NGROK_DOMAIN` for a reserved domain). The MCP endpoint is
@@ -91,11 +93,15 @@ bearer_token_env_var = "MCP_API_KEY"
 **Adobe sign-in (recommended):** set `ADOBE_SIGNIN_CLIENT_ID`, `ADOBE_SIGNIN_CLIENT_SECRET` and `ADOBE_SIGNIN_REDIRECT_URI`
 (`https://<ngrok-host>/oauth/adobe/callback`, from an Adobe OAuth Web App credential) plus `OAUTH_ALLOWED_EMAILS`
 (`email[:role],...`; role defaults to `OAUTH_DEFAULT_ROLE` or `leadership`). The connector login then redirects to Adobe IMS, and only
-allow-listed Adobe accounts get a token (fail closed). Optional: `ADOBE_SIGNIN_SCOPES` (default `openid,AdobeID,profile`).
-Upstream Adobe calls use the server-to-server credential by default. To call selected services as the signed-in user instead
-(for example when the shared credential has no AEP / RT-CDP access), set `ADOBE_USER_TOKEN_UPSTREAMS=cdp,marketing_agent` and add
-`offline_access` to `ADOBE_SIGNIN_SCOPES` (plus any scopes the service needs). Those services then use the user's own Adobe token with the
-sign-in app's client id; API-key and demo logins can't call them, and tokens are kept in memory only (restart = sign in again).
+allow-listed Adobe accounts receive an MCP OAuth token (fail closed). Optional: `ADOBE_SIGNIN_SCOPES` (default `openid,AdobeID,profile`).
+This flow validates the authorization code with Adobe and uses the resulting identity to authenticate the MCP user; its token is
+not reused for product APIs. Upstream Adobe calls use the server-to-server credential by default. To call selected services as the
+signed-in user instead, set `ADOBE_USER_TOKEN_UPSTREAMS=cdp,marketing_agent`. The first delegated call requires a separate Adobe
+product authorization. Configure `ADOBE_CONNECTION_ADOBE_SCOPES` (or `ADOBE_CONNECTION_SCOPES`) with the exact product scopes
+required by your Adobe Developer Console app; include `offline_access` if refresh tokens are needed. Product scopes and permissions
+are granted by Adobe and must be validated there—the server does not infer them from an identity token. Delegated calls use this
+separately authorized user token and the sign-in app's client id; API-key and demo logins can't call them, and tokens are kept in
+memory only (restart = sign in again).
 Without those settings, the approval page asks for `LOGIN_SECRET` and which demo user to act as. Redirect URIs are limited to `OAUTH_ALLOWED_REDIRECT_HOSTS`
 (default `chatgpt.com,openai.com,localhost,127.0.0.1`); consent attempts are throttled. OAuth clients and tokens are in memory, so
 restarting the server means reconnecting the connector. Set `PUBLIC_URL` if the issuer URL must not be derived from request headers.

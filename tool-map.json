@@ -1,0 +1,8 @@
+{
+  "aep.list_audiences": {
+    "service": "cdp",
+    "tool": "search_audiences",
+    "argMap": {},
+    "fixed": { "imsOrgId": "D0819D816ACE67180A495ED6@AdobeOrg", "sandboxName": "prod" }
+  }
+}

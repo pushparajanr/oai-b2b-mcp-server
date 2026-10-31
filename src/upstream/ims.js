@@ -1,10 +1,12 @@
+import { loggedFetch } from "../log.js";
+
 /**
  * Adobe IMS OAuth Server-to-Server (client_credentials) token provider.
  * Caches the access token, refreshes shortly before expiry, and de-duplicates concurrent refreshes.
  * Never logs or returns the client secret.
  */
 export class ImsTokenProvider {
-  constructor({ tokenUrl, clientId, clientSecret, scope, refreshToken, onRefreshToken, fetchImpl = fetch, now = Date.now, skewMs = 60_000 }) {
+  constructor({ tokenUrl, clientId, clientSecret, scope, refreshToken, onRefreshToken, fetchImpl = loggedFetch(fetch, "ims"), now = Date.now, skewMs = 60_000 }) {
     Object.assign(this, { tokenUrl, clientId, scope, refreshToken, onRefreshToken, fetchImpl, now, skewMs });
     this.secret = clientSecret;
     this.cached = null; this.inflight = null; this.requests = 0;
@@ -32,8 +34,14 @@ export class ImsTokenProvider {
       await this.onRefreshToken?.(data.refresh_token);
     }
     this.cached = { token: data.access_token, expiresAt: this.now() + Number(data.expires_in ?? 3600) * 1000 };
+    this.subject = tokenSubject(data.access_token) ?? this.subject;
     return this.cached.token;
   }
+}
+
+/** The IMS principal (`user_id` claim, e.g. a technical account ID) of a JWT access token; null for opaque tokens. Claims are read, not trusted for authorization. */
+function tokenSubject(token) {
+  try { return JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString()).user_id ?? null; } catch { return null; }
 }
 
 /** fetch wrapper that injects a fresh IMS bearer token and retries once after a 401 (revoked/expired token). */

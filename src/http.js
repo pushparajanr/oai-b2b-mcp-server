@@ -7,6 +7,7 @@ import { createServer } from "./index.js";
 import { platform as defaultPlatform } from "./platform.js";
 import { createConnect } from "./auth/connect.js";
 import { createOAuth } from "./oauth.js";
+import { log } from "./log.js";
 
 const json = (res, code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
 const readBody = (req) => new Promise((resolve, reject) => {
@@ -29,9 +30,16 @@ export function startHttp({ port = Number(process.env.PORT ?? 3000), platform = 
   const apiKey = process.env.MCP_API_KEY;
   if (apiKey && apiKey.length < 24) throw new Error("MCP_API_KEY must be at least 24 characters");
   const apiKeyIdentity = apiKey ? platform.auth.identityFor(process.env.MCP_API_KEY_USER ?? "morgan.ops") : null;
-  const oauth = createOAuth({ auth: platform.auth, loginSecret: process.env.LOGIN_SECRET, onAdobeTokens: platform.setUserTokens });
+  const oauth = createOAuth({ auth: platform.auth, loginSecret: process.env.LOGIN_SECRET, broker: platform.broker });
   const connect = createConnect({ broker: platform.broker });
   const server = http.createServer(async (req, res) => {
+    const t0 = performance.now();
+    const meta = {};
+    res.on("finish", () => {
+      const path = (req.url ?? "").split("?")[0];
+      log[path === "/healthz" ? "debug" : "info"]("http.request", { method: req.method, path, status: res.statusCode, ms: Math.round(performance.now() - t0),
+        ip: String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim(), ua: req.headers["user-agent"], ...meta });
+    });
     try {
       const url = new URL(req.url, "http://x");
       if (req.method === "GET" && url.pathname === "/healthz") return json(res, 200, { ok: true });
@@ -62,16 +70,21 @@ export function startHttp({ port = Number(process.env.PORT ?? 3000), platform = 
           const proto = req.headers["x-forwarded-proto"]?.split(",")[0] ?? "http";
           const base = (process.env.PUBLIC_URL ?? `${proto}://${req.headers["x-forwarded-host"]?.split(",")[0] ?? req.headers.host}`).replace(/\/$/, "");
           res.setHeader("www-authenticate", `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`);
+          log.warn("mcp.auth_failed", { reason: e.message });
           return json(res, 401, { error: e.message });
         }
+        meta.user = identity.userId;
         const mcp = createServer(undefined, { identity, platform });
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         res.on("close", () => { transport.close(); mcp.close(); });
         await mcp.connect(transport);
-        return transport.handleRequest(req, res, await readBody(req));
+        const body = await readBody(req);
+        const rpc = Array.isArray(body) ? body[0] : body;
+        Object.assign(meta, { rpc: rpc?.method, rpcTool: rpc?.params?.name });
+        return transport.handleRequest(req, res, body);
       }
       json(res, 404, { error: "not found" });
-    } catch (e) { if (!res.headersSent) json(res, 500, { error: e.message }); }
+    } catch (e) { log.error("http.unhandled", { path: req.url?.split("?")[0], error: e }); if (!res.headersSent) json(res, 500, { error: e.message }); }
   });
   return new Promise((resolve) => server.listen(port, () => resolve(server)));
 }
@@ -79,5 +92,7 @@ export function startHttp({ port = Number(process.env.PORT ?? 3000), platform = 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   await defaultPlatform.initUpstreams();
   const s = await startHttp();
+  const ups = [...defaultPlatform.upstreams.values()].map((u) => `${u.key}:${u.status.connected ? `ok(${u.status.tools})` : "down"}`);
+  log.info("server.start", { port: s.address().port, publicUrl: process.env.PUBLIC_URL, level: process.env.LOG_LEVEL ?? "info", sandbox: process.env.ADOBE_SANDBOX_NAME, policy: process.env.ADOBE_AUTH_POLICY, upstreams: ups.join(",") });
   console.error(`MCP HTTP listening on :${s.address().port}/mcp`);
 }

@@ -21,6 +21,7 @@ import { AuthPolicy } from "./auth/auth-policy.js";
 import { TokenBroker } from "./auth/token-broker.js";
 import { AjoRestAgent } from "./upstream/ajo-rest.js";
 import { readFileSync } from "node:fs";
+import { log } from "./log.js";
 
 export const PRODUCT_AGENTS = [aep, ajo, workfront, aemSites, aemAssets, brandConcierge, fusion, marketo, cja];
 const DEFAULT_GUIDELINES = { tone: "friendly", bannedWords: [], requiredDisclaimer: "", maxSubjectLength: 60 };
@@ -31,7 +32,7 @@ export function createPlatform({ now = Date.now, env = process.env } = {}) {
   const routes = env.ADOBE_TOOL_MAP ? JSON.parse(readFileSync(env.ADOBE_TOOL_MAP, "utf8")) : {};
   const policy_ = AuthPolicy.load(env);
   const broker = new TokenBroker({ env, policy: policy_, now });
-  const gateway = new Gateway({ agents: PRODUCT_AGENTS, integration, now, routes, broker, policy: policy_ });
+  const gateway = new Gateway({ agents: PRODUCT_AGENTS, integration, now, routes, broker, policy: policy_, orgId: env.ADOBE_ORG_ID });
   const upstreams = new Map();
   const data = new CampaignData({ now: () => new Date(now()).toISOString() });
   const notify = new Notifications({ now });
@@ -52,7 +53,7 @@ export function createPlatform({ now = Date.now, env = process.env } = {}) {
       runRole: (agent, tool, args) => { const a = roleAgents.get(agent); if (!a) throw new Error(`Unknown role agent '${agent}'`); return a.call(tool, args, ctx); } };
     return ctx;
   };
-  const systemIdentity = { userId: "system", name: "System", role: "marketing_ops", tenant: "acme", sandbox: "prod", imsOrg: "acme@AdobeOrg" };
+  const systemIdentity = { userId: "system", name: "System", role: "marketing_ops", tenant: "acme", sandbox: env.ADOBE_SANDBOX_NAME ?? "prod", imsOrg: env.ADOBE_ORG_ID ?? "acme@AdobeOrg" };
 
   // Inbound events (e.g. Workfront webhook): sync approval decisions and advance state.
   integration.onEvent("workfront", "approval.decided", async ({ campaignId }) => applyDecisionSync(data.get(campaignId), makeCtx(systemIdentity)));
@@ -89,6 +90,7 @@ export function createPlatform({ now = Date.now, env = process.env } = {}) {
       const agent = upstreams.get(cfg.key) ?? new RemoteAgent(cfg);
       upstreams.set(cfg.key, agent);
       await agent.discover();
+      log[agent.status.connected ? "info" : "warn"]("upstream.discover", { agent: agent.key, url: agent.url, connected: agent.status.connected, tools: agent.status.tools, error: agent.status.error });
       if (agent.status.connected) gateway.addService(agent);
     }));
     return upstreamStatus();

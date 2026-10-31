@@ -1,5 +1,6 @@
 import http from "node:http";
 import { writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -38,10 +39,10 @@ assert.equal(defaults.find((d) => d.key === "cdp").url, "https://rtcdp-mcp.adobe
 assert.equal(defaults.find((d) => d.key === "workfront_mcp").url, "https://mcp.workfront.adobe.com/mcp/v1/workfront");
 
 // Tool-route map: re-point a built-in tool at a live upstream tool.
-const mapFile = new URL("./tmp-map.json", import.meta.url).pathname;
+const mapFile = fileURLToPath(new URL("./tmp-map.json", import.meta.url));
 writeFileSync(mapFile, JSON.stringify({ "aep.list_audiences": { service: "cdp", tool: "list_audiences" } }));
 
-const env = { ADOBE_ALLOW_CUSTOM_HOSTS: "1", ADOBE_UPSTREAMS: "cdp,cloud_manager,brand_intelligence", ADOBE_IMS_TOKEN: "secret-token", ADOBE_ORG_ID: "ORG@AdobeOrg", ADOBE_CDP_URL: url, ADOBE_CLOUD_MANAGER_URL: url, ADOBE_BRAND_INTELLIGENCE_URL: url, ADOBE_TOOL_MAP: mapFile };
+const env = { USE_COWORKER_LOGIN: "0", ADOBE_ALLOW_CUSTOM_HOSTS: "1", ADOBE_UPSTREAMS: "cdp,cloud_manager,brand_intelligence", ADOBE_IMS_TOKEN: "secret-token", ADOBE_ORG_ID: "ORG@AdobeOrg", ADOBE_CDP_URL: url, ADOBE_CLOUD_MANAGER_URL: url, ADOBE_BRAND_INTELLIGENCE_URL: url, ADOBE_TOOL_MAP: mapFile };
 const p = createPlatform({ env });
 const status = await p.initUpstreams();
 assert.deepEqual(status.map((s) => [s.service, s.connected, s.tools]), [["cdp", true, 3], ["cloud_manager", true, 3], ["brand_intelligence", true, 3]]);

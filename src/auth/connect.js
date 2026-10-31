@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { log } from "../log.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const same = (a, b) => { const x = Buffer.from(String(a ?? "")); const y = Buffer.from(String(b ?? "")); return x.length === y.length && timingSafeEqual(x, y); };
@@ -27,7 +28,7 @@ export function createConnect({ broker }) {
         html(res, 200, `<h1>Connected</h1><p>Your Adobe account is now connected for <b>${esc(r.connection)}</b>. Return to the assistant and retry your request.</p>`, clear);
       } catch (e) {
         if (e.code === "session_invalid") { html(res, 400, "<p>This authorization link was already used or has expired. Ask the assistant for a new one.</p>", clear); return true; }
-        console.error(`Adobe connect failed: ${e.message}`);
+        log.error("connect.failed", { error: e });
         html(res, 502, "<p>Adobe authorization could not be completed. Ask the assistant for a new link and try again.</p>", clear);
       }
       return true;

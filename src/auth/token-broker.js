@@ -3,6 +3,8 @@ import { GatewayError } from "../gateway/transform.js";
 import { ImsTokenProvider } from "../upstream/ims.js";
 import { checkHost, DEFAULT_IMS_AUTHORIZE } from "../upstream/config.js";
 import { persistEnvValue } from "../upstream/local-env.js";
+import { loggedFetch } from "../log.js";
+import { COWORKER_CONNECTION, signinScopes } from "./coworker.js";
 
 const DEFAULT_IMS_TOKEN = "https://ims-na1.adobelogin.com/ims/token/v3";
 const CONNECT_TTL_MS = 10 * 60_000;
@@ -25,7 +27,7 @@ class ExpiringToken {
  * Secrets and tokens stay inside this class and the providers it owns.
  */
 export class TokenBroker {
-  constructor({ env = process.env, policy, now = Date.now, fetchImpl = fetch } = {}) {
+  constructor({ env = process.env, policy, now = Date.now, fetchImpl = loggedFetch(fetch, "ims") } = {}) {
     Object.assign(this, { env, policy, now, fetchImpl });
     this.tokenUrl = env.ADOBE_IMS_URL ?? DEFAULT_IMS_TOKEN; checkHost(env, this.tokenUrl, "ims");
     this.credentials = this.#loadCredentials(env);
@@ -34,7 +36,7 @@ export class TokenBroker {
     this.connectRequests = new Map();
     this.webApp = env.ADOBE_SIGNIN_CLIENT_ID && env.ADOBE_SIGNIN_CLIENT_SECRET ? {
       clientId: env.ADOBE_SIGNIN_CLIENT_ID, secret: env.ADOBE_SIGNIN_CLIENT_SECRET,
-      authorizeUrl: env.ADOBE_IMS_AUTHORIZE_URL ?? DEFAULT_IMS_AUTHORIZE, scopes: env.ADOBE_SIGNIN_SCOPES ?? "openid,AdobeID,profile",
+      authorizeUrl: env.ADOBE_IMS_AUTHORIZE_URL ?? DEFAULT_IMS_AUTHORIZE,
     } : null;
     if (this.webApp) checkHost(env, this.webApp.authorizeUrl, "adobe authorize");
     this.publicUrl = (env.PUBLIC_URL ?? "").replace(/\/$/, "") || null;
@@ -103,8 +105,11 @@ export class TokenBroker {
     const r = this.connectRequests.get(id);
     if (!r || r.exp < this.now()) throw new Error("This authorization link expired. Ask the assistant for a new one.");
     if (!this.redirectUri) throw new Error("PUBLIC_URL or ADOBE_CONNECT_REDIRECT_URI is not configured");
+    const scopes = this.env[`ADOBE_CONNECTION_${r.connection.toUpperCase()}_SCOPES`] ?? this.env.ADOBE_CONNECTION_SCOPES
+      ?? (r.connection === COWORKER_CONNECTION ? signinScopes(this.env.ADOBE_SIGNIN_SCOPES ?? "openid,AdobeID,profile", this.env) : undefined);
+    if (!scopes?.trim()) throw new GatewayError("connection_scopes_missing",
+      `Set ADOBE_CONNECTION_${r.connection.toUpperCase()}_SCOPES to the Adobe product scopes required for this connection, including offline_access if refresh tokens are needed.`);
     r.verifier = randomBytes(32).toString("base64url");
-    const scopes = this.env[`ADOBE_CONNECTION_${r.connection.toUpperCase()}_SCOPES`] ?? this.webApp.scopes;
     const u = new URL(this.webApp.authorizeUrl);
     for (const [k, v] of Object.entries({ response_type: "code", client_id: this.webApp.clientId, redirect_uri: this.redirectUri, scope: scopes, state: id,
       code_challenge: createHash("sha256").update(r.verifier).digest("base64url"), code_challenge_method: "S256" })) u.searchParams.set(k, v);
