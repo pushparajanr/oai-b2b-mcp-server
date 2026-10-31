@@ -39,7 +39,7 @@ const mcpSrv = http.createServer(async (req, res) => {
 await Promise.all([imsSrv, mcpSrv].map((s) => new Promise((r) => s.listen(0, r))));
 const imsUrl = `http://127.0.0.1:${imsSrv.address().port}/ims/token/v3`;
 const mcpUrl = `http://127.0.0.1:${mcpSrv.address().port}/mcp`;
-const env = (over = {}) => ({ ADOBE_ALLOW_CUSTOM_HOSTS: "1", ADOBE_UPSTREAMS: "cdp", ADOBE_IMS_URL: imsUrl, ADOBE_CDP_URL: mcpUrl, ADOBE_CLIENT_ID: CLIENT.id, ADOBE_CLIENT_SECRET: CLIENT.secret, ADOBE_SCOPES: CLIENT.scope, ADOBE_ORG_ID: "ORG@AdobeOrg", ADOBE_IMS_SKEW_MS: "0", ...over });
+const env = (over = {}) => ({ USE_COWORKER_LOGIN: "0", ADOBE_ALLOW_CUSTOM_HOSTS: "1", ADOBE_UPSTREAMS: "cdp", ADOBE_IMS_URL: imsUrl, ADOBE_CDP_URL: mcpUrl, ADOBE_CLIENT_ID: CLIENT.id, ADOBE_CLIENT_SECRET: CLIENT.secret, ADOBE_SCOPES: CLIENT.scope, ADOBE_ORG_ID: "ORG@AdobeOrg", ADOBE_IMS_SKEW_MS: "0", ...over });
 
 // --- config safety
 assert.throws(() => loadUpstreamConfig({ ADOBE_CLIENT_ID: "a", ADOBE_CLIENT_SECRET: "b", ADOBE_IMS_URL: "https://evil.example.com/token" }), /Refusing to send credentials/);

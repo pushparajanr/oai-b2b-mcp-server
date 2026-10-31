@@ -1,6 +1,10 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { checkHost, DEFAULT_IMS_AUTHORIZE } from "./upstream/config.js";
 import { ROLES } from "./gateway/config.js";
+import { log, loggedFetch } from "./log.js";
+import { useCoworkerLogin, COWORKER_CONNECTION, signinScopes } from "./auth/coworker.js";
+
+const signinFetch = loggedFetch(fetch, "adobe-signin");
 
 const DEFAULT_IMS_TOKEN = "https://ims-na1.adobelogin.com/ims/token/v3";
 const DEFAULT_IMS_USERINFO = "https://ims-na1.adobelogin.com/ims/userinfo/v2";
@@ -36,7 +40,8 @@ const readParams = async (req) => {
  * rotating refresh tokens. The consent page is gated by LOGIN_SECRET (the owner approves and picks the demo identity), and
  * access tokens are ordinary gateway tokens. All state is in memory, so restarting the server requires reconnecting.
  */
-export function createOAuth({ auth, loginSecret, onAdobeTokens, now = Date.now, env = process.env }) {
+export function createOAuth({ auth, loginSecret, broker, now = Date.now, env = process.env }) {
+  const coworkerLogin = useCoworkerLogin(env);
   const clients = new Map(); const codes = new Map(); const refreshTokens = new Map(); const fails = new Map();
   const allowedHosts = (env.OAUTH_ALLOWED_REDIRECT_HOSTS ?? DEFAULT_REDIRECT_HOSTS).split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
   const hostAllowed = (host) => allowedHosts.some((h) => host === h || host.endsWith(`.${h}`));
@@ -45,7 +50,7 @@ export function createOAuth({ auth, loginSecret, onAdobeTokens, now = Date.now, 
   const signin = env.ADOBE_SIGNIN_CLIENT_ID && env.ADOBE_SIGNIN_CLIENT_SECRET && env.ADOBE_SIGNIN_REDIRECT_URI ? (() => {
     const cfg = {
       clientId: env.ADOBE_SIGNIN_CLIENT_ID, clientSecret: env.ADOBE_SIGNIN_CLIENT_SECRET, redirectUri: env.ADOBE_SIGNIN_REDIRECT_URI,
-      scope: env.ADOBE_SIGNIN_SCOPES ?? "openid,AdobeID,profile",
+      scope: signinScopes(env.ADOBE_SIGNIN_SCOPES ?? "openid,AdobeID,profile", env),
       authorizeUrl: env.ADOBE_IMS_AUTHORIZE_URL ?? DEFAULT_IMS_AUTHORIZE, tokenUrl: env.ADOBE_IMS_URL ?? DEFAULT_IMS_TOKEN, userinfoUrl: env.ADOBE_IMS_USERINFO_URL ?? DEFAULT_IMS_USERINFO,
     };
     for (const u of [cfg.authorizeUrl, cfg.tokenUrl, cfg.userinfoUrl]) checkHost(env, u, "adobe sign-in");
@@ -62,24 +67,23 @@ export function createOAuth({ auth, loginSecret, onAdobeTokens, now = Date.now, 
   }
   const txs = new Map();
   const adobeProfile = async (code) => {
-    const tr = await fetch(signin.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ grant_type: "authorization_code", client_id: signin.clientId, client_secret: signin.clientSecret, code }) });
+    const tr = await signinFetch(signin.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "authorization_code", client_id: signin.clientId, client_secret: signin.clientSecret, code, redirect_uri: signin.redirectUri }) });
     const t = await tr.json().catch(() => ({}));
     if (!tr.ok || !t.access_token) throw new Error(`Adobe token exchange failed: ${tr.status} ${t.error ?? ""}`.trim());
-    const ur = await fetch(`${signin.userinfoUrl}?${new URLSearchParams({ client_id: signin.clientId })}`, { headers: { authorization: `Bearer ${t.access_token}` } });
+    const ur = await signinFetch(`${signin.userinfoUrl}?${new URLSearchParams({ client_id: signin.clientId })}`, { headers: { authorization: `Bearer ${t.access_token}` } });
     const u = await ur.json().catch(() => ({}));
     if (!ur.ok) throw new Error(`Adobe userinfo failed: ${ur.status}`);
     let email = String(u.email ?? u.preferred_username ?? "").toLowerCase();
     const id = u.sub ?? u.userId ?? u.user_id;
     if (!email) {
       try {
-        const pr = await fetch(new URL("/ims/profile/v1", signin.userinfoUrl), { headers: { authorization: `${"Bearer"} ${t.access_token}`, "x-api-key": signin.clientId } });
+        const pr = await signinFetch(new URL("/ims/profile/v1", signin.userinfoUrl), { headers: { authorization: `${"Bearer"} ${t.access_token}`, "x-api-key": signin.clientId } });
         if (pr.ok) email = String((await pr.json()).email ?? "").toLowerCase();
       } catch { /* fall back to the Adobe ID */ }
     }
-    if (!email && !id) { console.error(`Adobe userinfo had no email/sub; fields: ${Object.keys(u).join(",")}`); throw new Error("Adobe did not return an email for this account"); }
-    return { email, id: id ? String(id).toLowerCase() : "", name: u.name ?? u.display_name ?? email,
-      tokens: { accessToken: t.access_token, refreshToken: t.refresh_token, expiresIn: t.expires_in } };
+    if (!email && !id) { log.warn("oauth.userinfo_incomplete", { fields: Object.keys(u).join(",") }); throw new Error("Adobe did not return an email for this account"); }
+    return { email, id: id ? String(id).toLowerCase() : "", name: u.name ?? u.display_name ?? email, tokens: t };
   };
 
   const baseUrl = (req) => (env.PUBLIC_URL ?? `${req.headers["x-forwarded-proto"]?.split(",")[0] ?? "http"}://${req.headers["x-forwarded-host"]?.split(",")[0] ?? req.headers.host}`).replace(/\/$/, "");
@@ -171,12 +175,15 @@ export function createOAuth({ auth, loginSecret, onAdobeTokens, now = Date.now, 
       if (!tx || !same(cookieValue(req.headers.cookie, "oauth_tx"), p.state)) return fail(400, "Sign-in session expired or invalid. Start again from ChatGPT.");
       if (p.error || !p.code) { res.writeHead(302, { location: (() => { const u = new URL(tx.redirectUri); u.searchParams.set("error", "access_denied"); if (tx.state) u.searchParams.set("state", tx.state); return u.href; })(), ...clear }); res.end(); return true; }
       let who;
-      try { who = await adobeProfile(p.code); } catch (e) { console.error(`Adobe sign-in failed: ${e.message}`); return fail(502, "Adobe sign-in could not be completed. Try again."); }
+      try { who = await adobeProfile(p.code); } catch (e) { log.error("oauth.signin_failed", { error: e }); return fail(502, "Adobe sign-in could not be completed. Try again."); }
       const role = allowList.get(who.email) ?? allowList.get(who.id);
-      if (!role) { console.error(`Adobe sign-in refused (not on allow-list): ${who.email || who.id}`); return fail(403, "This Adobe account is not authorized for this server."); }
+      if (!role) { log.warn("oauth.signin_refused", { reason: "not_on_allow_list", email: who.email, imsUserId: who.id }); return fail(403, "This Adobe account is not authorized for this server."); }
       const userId = `adobe:${who.email || who.id}`;
       auth.registerUser(userId, { name: who.name, role });
-      onAdobeTokens?.(userId, who.tokens);
+      if (coworkerLogin && broker) {
+        const ok = broker.connect(userId, COWORKER_CONNECTION, { accessToken: who.tokens.access_token, refreshToken: who.tokens.refresh_token, expiresIn: who.tokens.expires_in });
+        log.info("oauth.coworker_connected", { user: userId, stored: ok, refreshable: !!who.tokens.refresh_token, expiresIn: who.tokens.expires_in, scope: signin.scope });
+      }
       const code = randomBytes(32).toString("base64url");
       codes.set(code, { clientId: tx.clientId, redirectUri: tx.redirectUri, challenge: tx.challenge, userId, exp: now() + CODE_TTL_MS });
       const u = new URL(tx.redirectUri); u.searchParams.set("code", code); if (tx.state) u.searchParams.set("state", tx.state);

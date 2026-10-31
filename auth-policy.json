@@ -1,0 +1,6 @@
+{
+  "default": {
+    "sandbox": "prod",
+    "sandboxes": ["prod", "mktoaepopenaipoc", "cja-development"]
+  }
+}

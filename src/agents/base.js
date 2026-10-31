@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { traced } from "../log.js";
 
 export const uid = (p) => `${p}_${randomUUID().slice(0, 8)}`;
 
@@ -26,12 +27,14 @@ export class Agent {
     return s;
   }
   async call(tool, args = {}) {
-    const def = this.tools[tool];
-    if (!def) throw new Error(`Agent '${this.key}' has no tool '${tool}'. Available: ${Object.keys(this.tools).join(", ")}`);
-    const parsed = def.shape ? def.schema.parse(args) : args;
-    const result = await def.run(parsed, this.state);
-    this.log.push({ tool, at: new Date().toISOString() });
-    return result;
+    return traced("product_agent.call", { agent: this.key, product: this.product, tool, args }, async () => {
+      const def = this.tools[tool];
+      if (!def) throw new Error(`Agent '${this.key}' has no tool '${tool}'. Available: ${Object.keys(this.tools).join(", ")}`);
+      const parsed = def.shape ? def.schema.parse(args) : args;
+      const result = await def.run(parsed, this.state);
+      this.log.push({ tool, at: new Date().toISOString() });
+      return result;
+    });
   }
   need(coll, id, label = coll) {
     const v = this.state[coll]?.get(id);

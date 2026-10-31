@@ -9,7 +9,7 @@ const imsSrv = http.createServer(async (req, res) => {
   const send = (code, o) => res.writeHead(code, { "content-type": "application/json" }).end(JSON.stringify(o));
   if (u.pathname === "/ims/token") {
     const f = new URLSearchParams(body); ims.seen.push(Object.fromEntries(f));
-    if (f.get("client_id") !== "web-client" || f.get("client_secret") !== "web-secret" || !ims.codes.has(f.get("code"))) return send(400, { error: "invalid_grant" });
+    if (f.get("client_id") !== "web-client" || f.get("client_secret") !== "web-secret" || f.get("redirect_uri") !== "https://mcp.example.test/oauth/adobe/callback" || !ims.codes.has(f.get("code"))) return send(400, { error: "invalid_grant" });
     const token = `at_${randomBytes(6).toString("hex")}`; ims.tokens.set(token, ims.codes.get(f.get("code"))); ims.codes.delete(f.get("code"));
     return send(200, { access_token: token, expires_in: 3600 });
   }
@@ -26,9 +26,10 @@ Object.assign(process.env, {
   LOGIN_SECRET: "test-login-secret-1234567890", PUBLIC_URL: "https://mcp.example.test", ADOBE_ALLOW_CUSTOM_HOSTS: "1",
   ADOBE_SIGNIN_CLIENT_ID: "web-client", ADOBE_SIGNIN_CLIENT_SECRET: "web-secret", ADOBE_SIGNIN_REDIRECT_URI: "https://mcp.example.test/oauth/adobe/callback",
   ADOBE_IMS_AUTHORIZE_URL: `${imsBase}/ims/authorize`, ADOBE_IMS_URL: `${imsBase}/ims/token`, ADOBE_IMS_USERINFO_URL: `${imsBase}/ims/userinfo`,
-  OAUTH_ALLOWED_EMAILS: "pat@acme.test:marketing_ops", MCP_API_KEY: "",
+  OAUTH_ALLOWED_EMAILS: "pat@acme.test:marketing_ops", MCP_API_KEY: "", ADOBE_COWORKER_SCOPES: "offline_access,additional_info.roles",
 });
 const { startHttp } = await import("../src/http.js");
+const { platform } = await import("../src/platform.js");
 const server = await startHttp({ port: 0 });
 const base = `http://127.0.0.1:${server.address().port}`;
 const REDIRECT = "https://chatgpt.com/connector_platform_oauth_redirect";
@@ -47,6 +48,7 @@ async function startSignin() {
   assert.equal(adobe.searchParams.get("client_id"), "web-client");
   assert.equal(adobe.searchParams.get("redirect_uri"), "https://mcp.example.test/oauth/adobe/callback");
   assert.equal(adobe.searchParams.get("response_type"), "code");
+  assert.equal(adobe.searchParams.get("scope"), "openid,AdobeID,profile,offline_access,additional_info.roles", "coworker scopes are requested at sign-in");
   const cookie = r.headers.get("set-cookie");
   assert.match(cookie, /oauth_tx=.*HttpOnly.*SameSite=Lax/);
   return { state: adobe.searchParams.get("state"), cookie: cookie.split(";")[0] };
@@ -65,6 +67,10 @@ assert.equal((await callback({ code: "c1", state: "nope" }, tx.cookie)).status, 
 tx = await startSignin(); ims.codes.set("c2", "pat@acme.test");
 const ok = await callback({ code: "c2", state: tx.state }, tx.cookie);
 assert.equal(ok.status, 302);
+const conns = platform.broker.connectionsFor("adobe:pat@acme.test");
+assert.deepEqual(conns.map((c) => c.connection), ["coworker"], "coworker login keeps the sign-in token as the user's coworker connection");
+assert.equal(platform.authPolicy.rule("coworker", "x").mode, "delegated");
+assert.equal(platform.authPolicy.rule("aep", "x").mode, "service", "other services keep their configured mode");
 const back = new URL(ok.headers.get("location"));
 assert.equal(back.origin + back.pathname, REDIRECT); assert.equal(back.searchParams.get("state"), "st1");
 const tok = await (await fetch(`${base}/oauth/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form({ grant_type: "authorization_code", client_id: reg.client_id, code: back.searchParams.get("code"), redirect_uri: REDIRECT, code_verifier: verifier }) })).json();
@@ -72,6 +78,7 @@ assert(tok.access_token, JSON.stringify(tok));
 const rpc = await fetch(`${base}/mcp`, { method: "POST", headers: { ...json, accept: "application/json, text/event-stream", authorization: `Bearer ${tok.access_token}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
 assert.equal(rpc.status, 200);
 assert.equal(ims.seen.at(-1).grant_type, "authorization_code");
+assert.equal(ims.seen.at(-1).redirect_uri, "https://mcp.example.test/oauth/adobe/callback");
 
 // the state is single use
 assert.equal((await callback({ code: "c2", state: tx.state }, tx.cookie)).status, 400);

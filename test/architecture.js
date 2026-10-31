@@ -147,6 +147,7 @@ assert.match(img.path, /\/content\/dam\/campaigns\//);
 const f1 = ok(await cm("forms_get", { formId: "approval_request", campaignId: cid }));
 assert.match(f1.blocked, /reporting/); assert.equal(f1.ui.library, "Adobe Spectrum");
 assert(ok(await cm("forms_get", { formId: "campaign_brief" })).fields.find((f) => f.name === "audienceId").options.length >= 1);
+assert.equal(ok(await creative("forms_get", { formId: "campaign_brief" })).fields.some((f) => f.name === "audienceId"), false, "roles without AEP access still get the form, without audience options");
 assert(!ok(await cm("forms_submit", { formId: "campaign_brief", values: { name: "X", brief: "b", channels: ["fax"] } })).valid);
 assert(ok(await cm("forms_submit", { formId: "campaign_brief", values: { name: "X", brief: "b", channels: ["email"] } })).campaignId);
 
@@ -172,11 +173,12 @@ await assert.rejects(async () => { for (let i = 0; i < 40; i++) await platform.g
 const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
 const srv = await startHttp({ port: 0 }); const base = `http://127.0.0.1:${srv.address().port}`;
 assert.equal((await fetch(`${base}/mcp`, { method: "POST", body: "{}" })).status, 401);
-const { token } = await (await fetch(`${base}/auth/login`, { method: "POST", body: JSON.stringify({ userId: "lee.leader" }) })).json();
+const { token } = await (await fetch(`${base}/auth/login`, { method: "POST", body: JSON.stringify({ userId: "lee.leader" }),
+  headers: { "x-login-secret": process.env.LOGIN_SECRET ?? "" } })).json();
 const hc = new Client({ name: "chatgpt", version: "1" });
 await hc.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${token}` } } }));
 assert.equal(JSON.parse((await hc.callTool({ name: "auth_whoami", arguments: {} })).content[0].text).role, "leadership");
 assert.match((await hc.callTool({ name: "aep_create_schema", arguments: { name: "x", fields: { a: "string" }, identityField: "a" } })).content[0].text, /forbidden/);
-srv.close();
+await hc.close();
+await new Promise((resolve) => srv.close(resolve));
 console.log("architecture OK");
-process.exit(0);

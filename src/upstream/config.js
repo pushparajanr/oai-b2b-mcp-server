@@ -23,13 +23,13 @@ export const checkHost = (env, url, what) => {
  *   ADOBE_ALLOW_CUSTOM_HOSTS=1 allow non-Adobe or non-https URLs (tests / private proxies only)
  * Tokens are only ever sent to https Adobe hosts unless ADOBE_ALLOW_CUSTOM_HOSTS=1.
  */
-export function loadUpstreamConfig(env = process.env) {
+export function loadUpstreamConfig(env = process.env, { providerFor } = {}) {
   const only = env.ADOBE_UPSTREAMS?.split(",").map((s) => s.trim()).filter(Boolean);
   const out = [];
   const authMode = env.ADOBE_AUTH_MODE ?? "client_credentials";
   if (!["client_credentials", "authorization_code"].includes(authMode)) throw new Error(`Unsupported ADOBE_AUTH_MODE '${authMode}'`);
   const hasRefreshCredentials = authMode !== "authorization_code" || !!env.ADOBE_REFRESH_TOKEN;
-  const ims = env.ADOBE_CLIENT_ID && env.ADOBE_CLIENT_SECRET && hasRefreshCredentials ? (() => {
+  const ims = providerFor ? null : env.ADOBE_CLIENT_ID && env.ADOBE_CLIENT_SECRET && hasRefreshCredentials ? (() => {
     const tokenUrl = env.ADOBE_IMS_URL ?? DEFAULT_IMS; checkHost(env, tokenUrl, "ims");
     return new ImsTokenProvider({
       tokenUrl, clientId: env.ADOBE_CLIENT_ID, clientSecret: env.ADOBE_CLIENT_SECRET,
@@ -44,15 +44,17 @@ export function loadUpstreamConfig(env = process.env) {
   for (const [key, def] of Object.entries(UPSTREAMS)) {
     const K = key.toUpperCase();
     const token = env[`ADOBE_${K}_TOKEN`] ?? env.ADOBE_IMS_TOKEN;
-    if ((!token && !ims) || (only && !only.includes(key))) continue;
+    const shared = providerFor?.(key) ?? null; // token broker's credential for this service: { provider, apiKey, orgId }
+    if ((!token && !ims && !shared) || (only && !only.includes(key))) continue;
     const url = env[`ADOBE_${K}_URL`] ?? def.url;
     checkHost(env, url, key);
-    const useIms = !env[`ADOBE_${K}_TOKEN`] && ims; // an explicit per-upstream static token wins
-    const apiKey = env.ADOBE_API_KEY ?? (useIms ? env.ADOBE_CLIENT_ID : undefined);
+    const useIms = !env[`ADOBE_${K}_TOKEN`] && (shared?.provider ?? ims); // an explicit per-upstream static token wins
+    const apiKey = shared ? shared.apiKey : env.ADOBE_API_KEY ?? (useIms ? env.ADOBE_CLIENT_ID : undefined);
+    const orgId = shared ? shared.orgId : env.ADOBE_ORG_ID;
     const headers = { ...(!useIms && { authorization: `Bearer ${token}` }),
-      ...(apiKey && { "x-api-key": apiKey }), ...(env.ADOBE_ORG_ID && { "x-gw-ims-org-id": env.ADOBE_ORG_ID }),
+      ...(apiKey && { "x-api-key": apiKey }), ...(orgId && { "x-gw-ims-org-id": orgId }),
       ...(env.ADOBE_SANDBOX_NAME && { "x-sandbox-name": env.ADOBE_SANDBOX_NAME }), ...JSON.parse(env[`ADOBE_${K}_HEADERS`] ?? "{}") };
-    out.push({ ...def, key, url, headers, ims: useIms || null });
+    out.push({ ...def, key, url, headers, extraHeaders: JSON.parse(env[`ADOBE_${K}_HEADERS`] ?? "{}"), ims: useIms || null });
   }
   return out;
 }
