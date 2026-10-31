@@ -14,7 +14,7 @@ export function registerAgents(server, platform, session) {
   const text = (d) => ({ type: "text", text: JSON.stringify(d, null, 2) });
   const add = (name, description, inputSchema, fn) => server.registerTool(name, { description, inputSchema }, async (args) => {
     try { const r = await fn(args); return r?.__meta ? { content: [text(r.data)], _meta: r.__meta } : { content: [text(r)] }; }
-    catch (e) { return { isError: true, content: [{ type: "text", text: e.code ? `[${e.code}] ${e.message}` : e.message }] }; }
+    catch (e) { return { isError: true, content: [{ type: "text", text: (e.code ? `[${e.code}] ${e.message}` : e.message) + (e.details ? `\n${JSON.stringify(e.details, null, 2)}` : "") }] }; }
   });
 
   const liveOnly = session.liveOnly === true;
@@ -38,7 +38,7 @@ export function registerAgents(server, platform, session) {
         const readOnly = a.readOnly || def.annotations?.readOnlyHint === true;
         server.registerTool(toolName, { description: `[LIVE ${a.product}] ${def.description ?? name}`, inputSchema: shape, annotations: { readOnlyHint: readOnly } }, async (args) => {
           try { const { result, meta } = await inv(a.key, name, args ?? {}); return { content: [text(result)], _meta: meta }; }
-          catch (e) { return { isError: true, content: [{ type: "text", text: e.code ? `[${e.code}] ${e.message}` : e.message }] }; }
+          catch (e) { return { isError: true, content: [{ type: "text", text: (e.code ? `[${e.code}] ${e.message}` : e.message) + (e.details ? `\n${JSON.stringify(e.details, null, 2)}` : "") }] }; }
         });
       }
     }
@@ -72,6 +72,16 @@ export function registerAgents(server, platform, session) {
   add("upstream_refresh", "Re-discover tools for live upstreams (restricted to marketing_ops).", {}, async () => {
     if (session.identity.role !== "marketing_ops") throw Object.assign(new Error("upstream_refresh requires marketing_ops"), { code: "forbidden" });
     return platform.initUpstreams();
+  });
+
+  // ---- Authentication: modes per operation, connections, explanations (no secrets) ----
+  add("auth_explain", "Which Adobe principal an operation runs as for you (delegated user vs service technical account), and whether a connection is needed.", { service: z.string(), tool: z.string() },
+    ({ service, tool }) => platform.broker.explain(session.identity, service, tool));
+  add("auth_connections", "Your Adobe connections (delegated user tokens) and their expiry.", {}, () => ({ user: session.identity.userId, connections: platform.broker.connectionsFor(session.identity.userId) }));
+  add("auth_connect", "Get a single-use link to connect your Adobe account for delegated operations (requested only when an operation needs it).", { connection: z.string().default("adobe") }, ({ connection }) => {
+    const connectUrl = platform.broker.connectUrl(session.identity.userId, connection);
+    if (!connectUrl) throw new Error("Connections need ADOBE_SIGNIN_CLIENT_ID/SECRET and PUBLIC_URL on the server.");
+    return { connection, connectUrl, expiresInMinutes: 10 };
   });
 
   // ---- Layer 4 gateway ----

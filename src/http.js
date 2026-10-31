@@ -4,7 +4,8 @@ import { timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "./index.js";
-import { platform } from "./platform.js";
+import { platform as defaultPlatform } from "./platform.js";
+import { createConnect } from "./auth/connect.js";
 import { createOAuth } from "./oauth.js";
 
 const json = (res, code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
@@ -23,12 +24,13 @@ const secretMatches = (given, expected) => {
  * POST /mcp requires `Authorization: Bearer <gateway token>`. POST /auth/login is a dev stand-in for Entra SSO
  * and is disabled when NODE_ENV=production unless ALLOW_DEV_LOGIN=1. POST /events/:source/:type needs WEBHOOK_SECRET.
  */
-export function startHttp({ port = Number(process.env.PORT ?? 3000) } = {}) {
+export function startHttp({ port = Number(process.env.PORT ?? 3000), platform = defaultPlatform } = {}) {
   const devLogin = process.env.NODE_ENV !== "production" || process.env.ALLOW_DEV_LOGIN === "1";
   const apiKey = process.env.MCP_API_KEY;
   if (apiKey && apiKey.length < 24) throw new Error("MCP_API_KEY must be at least 24 characters");
   const apiKeyIdentity = apiKey ? platform.auth.identityFor(process.env.MCP_API_KEY_USER ?? "morgan.ops") : null;
   const oauth = createOAuth({ auth: platform.auth, loginSecret: process.env.LOGIN_SECRET, onAdobeTokens: platform.setUserTokens });
+  const connect = createConnect({ broker: platform.broker });
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, "http://x");
@@ -36,6 +38,7 @@ export function startHttp({ port = Number(process.env.PORT ?? 3000) } = {}) {
       if (req.method === "GET" && url.pathname === "/") {
         return json(res, 200, { name: "oai-b2b-mcp-server", mcp_endpoint: "/mcp", note: "Add <this-host>/mcp as an MCP connector; browsers cannot use /mcp directly." });
       }
+      if (await connect(req, res, url)) return;
       if (await oauth(req, res, url)) return;
       if (req.method === "POST" && url.pathname === "/auth/login") {
         if (!devLogin) return json(res, 404, { error: "not found" });
@@ -61,7 +64,7 @@ export function startHttp({ port = Number(process.env.PORT ?? 3000) } = {}) {
           res.setHeader("www-authenticate", `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`);
           return json(res, 401, { error: e.message });
         }
-        const mcp = createServer(undefined, { identity });
+        const mcp = createServer(undefined, { identity, platform });
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         res.on("close", () => { transport.close(); mcp.close(); });
         await mcp.connect(transport);
@@ -74,7 +77,7 @@ export function startHttp({ port = Number(process.env.PORT ?? 3000) } = {}) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await platform.initUpstreams();
+  await defaultPlatform.initUpstreams();
   const s = await startHttp();
   console.error(`MCP HTTP listening on :${s.address().port}/mcp`);
 }

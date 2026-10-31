@@ -1,0 +1,60 @@
+# Authentication
+
+Flow (one request): **web user → Adobe web-app sign-in → validated application session → MCP authorization (user, action, resource) → token broker → delegated user token *or* technical-account token → product API.**
+
+| Step | Code |
+|---|---|
+| Adobe web-app sign-in, validated session | `src/oauth.js`, bearer session in `src/http.js` |
+| MCP authorization: user × action × resource | role access `gateway/security.js` + operation policy `auth/auth-policy.js` (`allowedRoles`, `sandboxes`) |
+| Token broker | `auth/token-broker.js` |
+| Missing connection / incremental authorization | `auth/connect.js` (`/connect/<id>`), tools `auth_connect`, `auth_connections` |
+| Audit: requesting user **and** executing principal | `gateway/gateway.js` → `gateway_audit_log` (`user`, `authMode`, `principal`, `upstreamStatus`, `upstreamRequestId`) |
+
+## Mode per operation
+Rules resolve most-specific first: `operations["service.tool"]` > `services["service"]` > `default` (`mode: service`). Put them in a JSON file named by `ADOBE_AUTH_POLICY`:
+
+```json
+{
+  "services": {
+    "cdp": { "mode": "service", "sandbox": "prod", "sandboxes": ["prod", "dev"] },
+    "workfront_mcp": { "mode": "service", "credential": "workfront" },
+    "marketing_agent": { "mode": "delegated" }
+  },
+  "operations": { "aem.some-write-tool": { "mode": "delegated" }, "cdp.some-tool": { "allowedRoles": ["marketing_ops"] } }
+}
+```
+- **service**: server-to-server token for a named credential. This server decides who may invoke it (role access to the service, optional `allowedRoles`). Adobe sees the technical account, so use it only for operations the application is authorized to perform for those users.
+- **delegated**: the user's own Adobe token from a connection. Use it when Adobe must enforce the individual's access.
+- **missing connection**: a delegated operation without a connection returns `connection_required` with a single-use authorization link. **It never falls back to a technical account**, and a delegated request Adobe denies (401/403) is returned as-is, never retried with a more powerful credential.
+
+Shortcuts: `ADOBE_AUTH_MODE_<SERVICE>=delegated`; legacy `ADOBE_USER_TOKEN_UPSTREAMS=a,b` marks those services delegated.
+
+## Credentials (keep Web App and Server-to-Server separate)
+| Purpose | Env | Sent as |
+|---|---|---|
+| Default S2S credential | `ADOBE_CLIENT_ID`, `ADOBE_CLIENT_SECRET`, `ADOBE_SCOPES`, `ADOBE_ORG_ID` | token + `x-api-key` = S2S client id, `x-gw-ims-org-id` |
+| Another S2S credential (`credential: "workfront"`) | `ADOBE_CRED_WORKFRONT_CLIENT_ID/_CLIENT_SECRET/_SCOPES/_ORG_ID` | same, with that credential's own client id and org |
+| Web App (user sign-in and connections) | `ADOBE_SIGNIN_CLIENT_ID`, `ADOBE_SIGNIN_CLIENT_SECRET`, `ADOBE_SIGNIN_SCOPES`, `PUBLIC_URL` | user token + `x-api-key` = **web-app** client id |
+| Sandbox | `ADOBE_SANDBOX_NAME`, or `sandbox` / `sandboxes` in the policy | `x-sandbox-name`; a caller may pick only an allowed sandbox |
+
+A token is always paired with the client id that issued it. Header sets are product specific: use `ADOBE_<KEY>_HEADERS` (JSON) for extras. The broker resolves credential, org and sandbox from server configuration, not from request arguments.
+
+Connection scopes: `ADOBE_CONNECTION_<NAME>_SCOPES` (default `ADOBE_SIGNIN_SCOPES`). Register `PUBLIC_URL/connect/callback` (or `ADOBE_CONNECT_REDIRECT_URI`) as a redirect URI on the Web App credential.
+
+## Caching and renewal
+Service tokens are cached by **client id + org + scope set** (shared by every service using that credential); delegated tokens by **user + connection**. Both renew from `expires_in` (refresh token for delegated; a connection without one must be re-authorized at expiry). Secrets and tokens never leave the broker, audit log, errors or status output.
+
+## Errors
+Upstream failures keep `status`, `requestId` and `body` under `details.upstream`. 401/403 are `upstream_unauthorized` / `upstream_forbidden` with a hint naming the acting principal; a 5xx is `upstream_error` and says it is not evidence of an authentication problem.
+
+## Provisioning checklist (done in Adobe, not in code)
+| Service | Do this |
+|---|---|
+| Experience Platform | Developer Console: OAuth Server-to-Server + product profile. AEP **Permissions → Roles → role → API credentials → Add API credentials**, pick the credential, then verify permissions **and sandboxes**. Assigning a human to the role does not cover the service account. |
+| Journey Optimizer | Same product profile / AEP role; grant endpoint-specific permissions and sandbox access. |
+| AEM Assets Author API | Product profile for the right author environment; configure that AEM instance to allow the client. |
+| Workfront | Find the technical-account user in Workfront; grant access level and resource access. |
+| Workfront Fusion | Add the technical account to the required teams; org-wide/admin operations need more. |
+| Brand Intelligence | Confirm entitlement and completed brand-profile onboarding. |
+
+Adding an API card to a project does not complete authorization, and S2S and Web App credentials in one project are not interchangeable. Verify each product directly first: `npm run auth:diagnose` (IMS token, direct call, brokered call, per service).

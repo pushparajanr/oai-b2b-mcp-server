@@ -8,10 +8,10 @@
     "oai-b2b-mcp-server": "src/index.js"
   },
   "scripts": {
-    "start": "node src/index.js", "start:http": "node src/http.js", "ims:check": "node scripts/ims-check.js",
+    "start": "node src/index.js", "start:http": "node src/http.js", "ims:check": "node scripts/ims-check.js", "auth:diagnose": "node scripts/auth-diagnose.js",
     "adobe:login": "node scripts/adobe-oauth.js",
     "start:tunnel": "node scripts/tunnel.js",
-    "test": "node test/smoke.js && node test/agents.js && node test/architecture.js && node test/upstream.js && node test/ims.js && node test/oauth-web.js && node test/oauth-server.js && node test/oauth-adobe.js && node test/user-auth.js && node test/ajo-rest.js"
+    "test": "node test/smoke.js && node test/agents.js && node test/architecture.js && node test/upstream.js && node test/ims.js && node test/oauth-web.js && node test/oauth-server.js && node test/oauth-adobe.js && node test/auth-modes.js && node test/ajo-rest.js"
   },
   "engines": {
     "node": ">=18"

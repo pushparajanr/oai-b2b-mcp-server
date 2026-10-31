@@ -115,3 +115,8 @@ validates the redirect URI and OAuth state, exchanges the one-time code, and sto
 The server refreshes and caches access tokens and saves any rotated refresh token back to `.env`. Restart the server after
 login. If the callback is not routed to this machine, the browser must still reach a page that leaves the full redirect URL
 visible so you can copy it into the prompt.
+
+## Authentication modes
+Each API operation runs either as a **service** (technical account) or **delegated** (the user's own Adobe token), set per operation by policy.
+A delegated operation with no connection returns `connection_required` plus an authorization link and never falls back to a technical account.
+Audit records both the requesting user and the executing Adobe principal. See [AUTH.md](AUTH.md); verify with `npm run auth:diagnose`.

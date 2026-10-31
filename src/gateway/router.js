@@ -13,8 +13,8 @@ class Bucket {
 
 /** Request router: picks MCP vs API transport, attaches product token + sandbox/org context, rate limits, retries. */
 export class Router {
-  constructor({ services, auth, integration, now = Date.now, rate = { capacity: 120, perSec: 2 } }) {
-    Object.assign(this, { services, auth, integration, now, rate });
+  constructor({ services, auth, broker = null, integration, now = Date.now, rate = { capacity: 120, perSec: 2 } }) {
+    Object.assign(this, { services, auth, broker, integration, now, rate });
     this.buckets = new Map();
   }
   async dispatch({ identity, cap, args }) {
@@ -23,8 +23,12 @@ export class Router {
     if (!this.buckets.get(key).take()) throw new GatewayError("rate_limited", `Rate limit exceeded for ${cap.service}`, { service: cap.service, retryable: true });
     const svc = this.services.get(cap.service);
     const route = { transport: cap.transport, sandbox: identity.sandbox, tenant: identity.tenant, imsOrg: identity.imsOrg, productToken: svc.live ? undefined : this.auth.productToken(identity, cap.service) };
-    const result = await this.integration.withRetry(() => svc.call(cap.tool, args, identity));
+    // Live services act as an Adobe principal chosen by the token broker (user token or technical account), never both.
+    const authCtx = svc.live ? await this.broker.resolve({ identity, service: cap.service, tool: cap.tool, args }) : null;
+    let result;
+    try { result = await this.integration.withRetry(() => svc.call(cap.tool, args, identity, authCtx)); }
+    catch (e) { if (authCtx) Object.assign(e, { principal: authCtx.principal, authMode: authCtx.mode }); throw e; }
     const { productToken, ...safeRoute } = route; // never surface tokens to callers
-    return { result, route: safeRoute };
+    return { result, route: { ...safeRoute, ...(authCtx && { auth: { mode: authCtx.mode, principal: authCtx.principal } }) } };
   }
 }

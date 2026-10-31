@@ -3,22 +3,20 @@ import { UpstreamClient } from "./client.js";
 
 /** A live Adobe MCP endpoint presented as a gateway service. Tool catalog is discovered, never hard-coded. */
 export class RemoteAgent extends Agent {
-  constructor(cfg, client = new UpstreamClient(cfg), userAuth = null) {
+  constructor(cfg, client = new UpstreamClient(cfg)) {
     super({ key: cfg.key, name: `${cfg.label} (live)`, product: cfg.label, description: `Live MCP upstream (${cfg.note})`, keywords: cfg.keywords ?? [], tools: {} });
-    Object.assign(this, { client, cfg, userAuth, userClients: new Map(), auth: cfg.ims ? cfg.ims : null, live: true, readOnly: !!cfg.readOnly, url: cfg.url, status: { connected: false, tools: 0, error: null } });
+    Object.assign(this, { client, cfg, clients: new Map(), auth: cfg.ims ? cfg.ims : null, live: true, readOnly: !!cfg.readOnly, url: cfg.url, status: { connected: false, tools: 0, error: null } });
   }
-  /** Client that calls this endpoint as the signed-in user (their own Adobe token), created once per user. */
-  #clientFor(identity) {
-    const id = identity?.userId;
-    if (!id || !this.userAuth.has(id)) throw new Error(`'${this.key}' runs as your own Adobe account. Remove and re-add the connector and sign in with Adobe (API-key and demo logins can't use it).`);
-    if (!this.userClients.has(id)) {
-      const headers = { ...this.cfg.headers, "x-api-key": this.userAuth.clientId };
-      this.userClients.set(id, new UpstreamClient({ key: this.key, url: this.url, headers, ims: this.userAuth.provider(id) }));
+  /** One client per acting principal (service credential+sandbox, or user+connection), created on first use. */
+  #clientFor(authCtx) {
+    if (!authCtx || (authCtx.mode === "service" && !authCtx.provider)) return this.client; // static-token setup
+    if (!this.clients.has(authCtx.key)) {
+      this.clients.set(authCtx.key, new UpstreamClient({ key: this.key, url: this.url, headers: { ...this.cfg.extraHeaders, ...authCtx.headers }, ims: authCtx.provider }));
     }
-    return this.userClients.get(id);
+    return this.clients.get(authCtx.key);
   }
-  /** Called when a user signs in again with fresh tokens. */
-  resetUser(userId) { this.userClients.get(userId)?.close(); this.userClients.delete(userId); }
+  /** Drop cached clients for a user (called when their connection changes). */
+  dropUser(userId) { for (const [k, c] of this.clients) if (k.startsWith(`delegated|${userId}|`)) { c.close(); this.clients.delete(k); } }
   async discover() {
     try {
       const tools = await this.client.listTools();
@@ -27,10 +25,9 @@ export class RemoteAgent extends Agent {
     } catch (e) { this.status = { connected: false, tools: 0, error: e.message, auth: this.auth?.status().method ?? "static-token" }; }
     return this.status;
   }
-  async call(tool, args = {}, identity) {
+  async call(tool, args = {}, identity, authCtx) {
     if (!this.tools[tool]) throw new Error(`Live service '${this.key}' has no tool '${tool}'. Use upstream_list_tools.`);
-    const client = this.userAuth ? this.#clientFor(identity) : this.client;
-    const result = await client.callTool(tool, args);
+    const result = await this.#clientFor(authCtx).callTool(tool, args);
     this.log.push({ tool, at: new Date().toISOString() });
     return result;
   }
